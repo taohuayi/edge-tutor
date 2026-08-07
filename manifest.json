@@ -1,0 +1,9 @@
+{
+  "id": "edge-tutor",
+  "name": "Edge Tutor",
+  "version": "0.2.0",
+  "minAppVersion": "1.4.0",
+  "description": "认知边缘导师：选中教材文本追问 AI（价值识别器，绝不拉回），沉淀认知节点笔记 + 原理链认知地图",
+  "author": "xu",
+  "isDesktopOnly": true
+}
