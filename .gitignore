@@ -8,3 +8,6 @@ node_modules/
 # 绯荤粺
 .DS_Store
 Thumbs.db
+
+# 测试构建产物
+test/.build/

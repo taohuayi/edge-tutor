@@ -24,7 +24,15 @@ export interface AgentTool {
 export interface ToolCall {
   id: string;
   name: string;
-  arguments: Record<string, unknown>;
+  /** openai 模式为对象；opencode 模式为字符串摘要 */
+  arguments: Record<string, unknown> | string;
+}
+
+/** 一次工具执行步骤（回调给 UI 显示过程日志） */
+export interface AgentStep {
+  turn: number;
+  call: ToolCall;
+  result: string;
 }
 
 /** vault 工具执行器 —— 由插件实现（main.ts 注入），返回给模型的结果文本 */
@@ -117,9 +125,11 @@ export const AGENT_TOOLS: AgentTool[] = [
 const TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 
 /** 构造 agent system prompt（价值识别器 + 工具使用说明） */
-export function buildAgentSystemPrompt(): string {
+export function buildAgentSystemPrompt(wsHint?: string): string {
   return [
     "你是「认知边缘导师」的执行代理（agent）。用户在 Obsidian 里给你下达操作指令，你通过调用工具完成它。",
+    "",
+    wsHint ? wsHint : "",
     "",
     "工具使用铁律：",
     "1. 需要了解现状 → 先 list_nodes / search_notes / read_note，不要凭空假设。",
@@ -144,12 +154,12 @@ export async function runAgent(
   config: AgentConfig,
   userInput: string,
   executor: ToolExecutor,
-  opts: { signal?: AbortSignal; onDelta?: (text: string) => void } = {}
+  opts: { signal?: AbortSignal; onDelta?: (text: string) => void; onStep?: (step: AgentStep) => void; maxTurns?: number; wsHint?: string } = {}
 ): Promise<AgentResult> {
-  const maxTurns = 8;
+  const maxTurns = opts.maxTurns && opts.maxTurns > 0 ? opts.maxTurns : 30;
   const toolsUsed = new Set<string>();
   const messages: Record<string, unknown>[] = [
-    { role: "system", content: buildAgentSystemPrompt() },
+    { role: "system", content: buildAgentSystemPrompt(opts.wsHint) },
     { role: "user", content: userInput },
   ];
   let turns = 0;
@@ -212,16 +222,19 @@ export async function runAgent(
     // 逐个执行工具并回填
     for (const call of calls) {
       if (!TOOL_NAMES.has(call.name)) {
-        messages.push({ role: "tool", tool_call_id: call.id, content: `未知工具：${call.name}` });
+        const err = `未知工具：${call.name}`;
+        messages.push({ role: "tool", tool_call_id: call.id, content: err });
+        opts.onStep?.({ turn: turns, call, result: err });
         continue;
       }
       toolsUsed.add(call.name);
       let result: string;
       try {
-        result = await executor(call.name, call.arguments);
+        result = await executor(call.name, call.arguments as Record<string, unknown>);
       } catch (e) {
         result = `工具执行失败: ${(e as Error).message.slice(0, 300)}`;
       }
+      opts.onStep?.({ turn: turns, call, result });
       messages.push({ role: "tool", tool_call_id: call.id, content: result });
     }
   }
@@ -288,7 +301,11 @@ export function buildVaultExecutor(app: App, ctx: {
       case "query_backlinks": {
         const path = String(args.path ?? "");
         if (!path) return "错误：需要 path 参数";
-        const links = app.metadataCache.getBacklinksForPath(path);
+        // metadataCache.getBacklinksForPath 不在类型声明里（新版 d.ts），运行时存在
+        const cache = app.metadataCache as unknown as {
+          getBacklinksForPath: (path: string) => Map<string, unknown>;
+        };
+        const links = cache.getBacklinksForPath(path);
         const keys = [...links.keys()];
         if (keys.length === 0) return `没有笔记引用 ${path}`;
         return `引用 ${path} 的笔记：\n${keys.slice(0, 20).map((k) => `- ${k}`).join("\n")}`;

@@ -14,15 +14,17 @@
  *   - 状态栏：操作反馈 / 草稿恢复提示
  */
 import { App, ItemView, MarkdownRenderer, MarkdownView, Modal, Notice, TFile, WorkspaceLeaf } from "obsidian";
-import { TutorSettings, ChatMessage, buildSystemPrompt, streamCompletion } from "./ai";
-import { buildGuideSystemPrompt, parseGuideResponse, GuideEntry, CognitiveMapSummary } from "./guide";
+import { TutorSettings, ChatMessage, buildSystemPrompt, streamCompletion, buildNoteContextBlocks, extractNoteLinks } from "./ai";
+import { buildGuideSystemPrompt, parseGuideResponse, GuideEntry, GuideMode, CognitiveMapSummary } from "./guide";
+import { SearchHit } from "./search";
 import { parkQuestion, takeParked, makeNodeTitle, buildNodeContent } from "./tutor";
 import { mindMapLayout, layoutToCoordinates, buildEdgePath, MindMapThread } from "./canvas";
+import { NoteSuggest } from "./suggest";
 import {
   Conv, ConvMessage, ConvThread, freshConv, pushMessage, addThread, ancestry, activeThread,
-  collectSubtree, reparentThread, switchThread, pauseActive, removeThread,
+  collectSubtree, reparentThread, switchThread, pauseActive, removeThread, removeMessage,
   messagesForView, messageLineId, searchConversation, branchInstruction, finishAnswer,
-  cognitiveMapSummary,
+  cognitiveMapSummary, serializeConv,
 } from "./conv";
 
 export const VIEW_TYPE_TUTOR = "edge-tutor-view";
@@ -45,6 +47,13 @@ export interface TutorPlugin {
   renameWorkspace: (oldName: string, newName: string) => Promise<void>;
   discoverWorkspaces: () => Promise<string[]>;
   exportWorkspace: (format: "markdown" | "json") => Promise<void>;
+  rebuildConvFromNodes: (workspace?: string) => Promise<Conv | null>;
+  deleteThreadsWithFiles: (workspace: string, threadIds: string[]) => Promise<number>;
+  setNodeLocked: (workspace: string, title: string, locked: boolean) => Promise<boolean>;
+  buildGlobalMapText: () => Promise<{ text: string; locked: string[]; total: number }>;
+  semanticTextbookSearch: (query: string) => Promise<SearchHit>;
+  activateAgentView: () => Promise<void>;
+  ensureOpenCodeServer: () => Promise<{ ok: boolean; message: string }>;
 }
 
 /** 兼容节点形状（view 传给 createNode 的最小结构） */
@@ -77,6 +86,9 @@ export class TutorView extends ItemView {
   currentWorkspace = "main";
   private viewMode: ViewMode = "path";
   private inputEl!: HTMLTextAreaElement;
+  private inputRowEl!: HTMLElement;
+  private chipsEl!: HTMLElement;
+  private noteSuggest: NoteSuggest | null = null;
   private sendBtn!: HTMLButtonElement;
   private draftTimer: number | null = null;
   private branchNext = false;
@@ -86,6 +98,8 @@ export class TutorView extends ItemView {
   /** 已选中的方向导引入口，发送前允许用户改写 */
   private pendingGuide: GuideEntry | null = null;
   private branchClipboard: ConvThread[] = [];
+  /** 剪贴板分支的来源工作区（粘贴后「删除源」用） */
+  private branchClipboardWs = "";
   private selBtn: HTMLButtonElement | null = null;
   private searchEl!: HTMLInputElement;
   private searchResultsEl!: HTMLElement;
@@ -97,6 +111,8 @@ export class TutorView extends ItemView {
   private branchClipboardMessages: ConvMessage[] = [];
   /** 消息滚动位置（按视图模式记忆） */
   private messageScroll: Record<string, number> = {};
+  /** 懒渲染窗口起点（按视图模式记忆，P2-6）：只渲染 [loadedStart, total) */
+  private loadedStart: Record<string, number> = {};
   /** 上一帧活跃线程 id（用于导图自动定位） */
   private lastRenderedMapId: string | null = null;
 
@@ -146,7 +162,7 @@ export class TutorView extends ItemView {
       try {
         await this.plugin.saveConv(this.conv);
         this.currentWorkspace = target;
-        this.conv = await this.plugin.loadConv(target);
+        this.conv = await this.ensureWorkspaceLoaded(target);
         this.lastRenderedMapId = null;
         // 清搜索状态
         this.searchQuery = "";
@@ -230,6 +246,39 @@ export class TutorView extends ItemView {
 
     // ===== 工具行 =====
     const tools = container.createEl("div", { cls: "edge-tutor-tools" });
+    // 打开独立执行面板（agent 任务与对话完全分离）
+    const agentBtn = tools.createEl("button", { text: "🤖 执行面板", cls: "edge-tutor-btn edge-tutor-agent-open" });
+    agentBtn.addEventListener("click", () => void this.plugin.activateAgentView());
+    const ocBtn = tools.createEl("button", { text: "🔌 opencode", cls: "edge-tutor-btn edge-tutor-oc-btn", attr: { title: "检测 / 启动 opencode serve（执行面板后端）" } });
+    ocBtn.addEventListener("click", async () => {
+      if (this.busy) return;
+      ocBtn.disabled = true;
+      this.setStatus("检查 opencode serve…");
+      const r = await this.plugin.ensureOpenCodeServer();
+      ocBtn.disabled = false;
+      this.setStatus(r.message);
+      if (r.ok) {
+        new Notice(r.message);
+      } else {
+        new Notice("⚠️ " + r.message);
+      }
+    });
+    // 教材检索开关：打开时提问自动检索教材原文，结果注入问答模型（不污染对话流）
+    const searchBtn = tools.createEl("button", {
+      text: "🔍 教材检索",
+      cls: "edge-tutor-btn edge-tutor-search-toggle" + (this.plugin.settings.textbookSearchEnabled ? " active" : ""),
+      attr: { title: "开关：提问时自动检索教材原文注入问答模型（结果不进对话流）" },
+    });
+    searchBtn.addEventListener("click", async () => {
+      this.plugin.settings.textbookSearchEnabled = !this.plugin.settings.textbookSearchEnabled;
+      await this.plugin.saveSettings();
+      searchBtn.classList.toggle("active", this.plugin.settings.textbookSearchEnabled);
+      this.setStatus(
+        this.plugin.settings.textbookSearchEnabled
+          ? "🔍 教材检索已开启：提问时自动检索教材原文（结果仅提供给问答模型）"
+          : "教材检索已关闭"
+      );
+    });
     const guideBtn = tools.createEl("button", { text: "🧭 方向指引", cls: "edge-tutor-btn" });
     guideBtn.addEventListener("click", () => this.requestGuide());
     const mapBtn = tools.createEl("button", { text: "🗺️ 导图", cls: "edge-tutor-btn" });
@@ -256,13 +305,7 @@ export class TutorView extends ItemView {
     wideBtn.addEventListener("click", () => this.toggleWideMode());
     const clearBtn = tools.createEl("button", { text: "✖ 清屏", cls: "edge-tutor-btn", attr: { title: "清空当前对话" } });
     clearBtn.addEventListener("click", () => {
-      this.conv.messages = [];
-      this.conv.reading.threads = [];
-      this.conv.reading.activeId = null;
-      this.conv.reading.parkingLot = [];
-      void this.plugin.saveConv(this.conv);
-      this.renderAll();
-      new Notice("已清空当前对话");
+      void this.confirmClear();
     });
 
     // ===== 工具行 2：搜索 + 粘贴为根 + 导出（Zotero notebookTools） =====
@@ -299,8 +342,13 @@ export class TutorView extends ItemView {
     // 搜索结果列表
     this.searchResultsEl = container.createEl("div", { cls: "edge-tutor-search-results" });
 
+    // ===== 上下文 chips（选中文本锚点提示，P0-1） =====
+    this.chipsEl = container.createEl("div", { cls: "edge-tutor-context-chips" });
+    this.chipsEl.style.display = "none";
+
     // ===== 输入区 =====
     const inputRow = container.createEl("div", { cls: "edge-tutor-input-row" });
+    this.inputRowEl = inputRow;
     this.inputEl = inputRow.createEl("textarea", {
       cls: "edge-tutor-input",
       attr: { placeholder: "追问或提问…（Enter 发送，Shift+Enter 换行）", rows: "3" },
@@ -310,10 +358,21 @@ export class TutorView extends ItemView {
 
     this.inputEl.addEventListener("input", () => this.scheduleDraftSave());
     this.inputEl.addEventListener("keydown", (e) => {
+      // @ 建议框打开时：Enter/方向键/Escape/Tab 交给建议框处理（P1-3），不触发发送
+      if (this.noteSuggest && this.noteSuggest.isSuggestOpen()) {
+        if (e.key === "Enter" || e.key === "Escape" || e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab") {
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this.sendFromInput();
       }
+    });
+
+    // @ 引用笔记（P1-3）：输入 @ 弹出 vault 笔记选择器，选中插入 [[笔记名]]
+    this.noteSuggest = new NoteSuggest(this.app, this.inputEl, (file) => {
+      new Notice(`已引用笔记：${file.basename}（随消息发送给 AI）`);
     });
 
     // ===== 状态栏 =====
@@ -321,22 +380,88 @@ export class TutorView extends ItemView {
 
     this.initSelFloat();
 
-    // 加载当前工作区会话
+    // 注册 conv 外部修改监听（agent 改文件时面板自动同步）
+    this.registerConvWatcher();
+
+    // 加载当前工作区会话（currentWorkspace 可能已被 refreshWorkspaceSelect 自动切换到教材工作区）
     try {
-      this.conv = await this.plugin.loadConv("main");
+      this.conv = await this.ensureWorkspaceLoaded(this.currentWorkspace);
     } catch (e) {
-      this.conv = freshConv("main");
+      this.conv = freshConv(this.currentWorkspace);
     }
     await this.restoreDraft();
     await this.renderAll();
     this.scrollToBottom();
   }
 
+  /**
+   * 统一加载逻辑（onOpen + 工作区切换共用）：
+   * - conv 全空（0 消息 0 线程）且节点文件存在 → 从节点重建（清屏/新建/迁移语义，节点永存）
+   * - threads=0 但 messages>0 → 用户主动删除/移动的结果，不重建，原样返回
+   */
+  private async ensureWorkspaceLoaded(ws: string): Promise<Conv> {
+    const conv = await this.plugin.loadConv(ws);
+    if (conv.messages.length === 0 && conv.reading.threads.length === 0) {
+      const rebuilt = await this.plugin.rebuildConvFromNodes(ws);
+      if (rebuilt) {
+        await this.plugin.saveConv(rebuilt);
+        this.setStatus(`已从 ${rebuilt.reading.threads.length} 个节点文件恢复认知地图`);
+        return rebuilt;
+      }
+    }
+    return conv;
+  }
+
+  /** 供命令调用：用外部重建的 conv 替换当前会话并刷新 */
+  async reloadFromConv(conv: Conv) {
+    this.conv = conv;
+    this.currentWorkspace = conv.workspace || this.currentWorkspace;
+    await this.plugin.saveConv(this.conv);
+    this.lastRenderedMapId = null;
+    await this.renderAll();
+  }
+
   async onClose() {
     await this.flushDraft();
     await this.plugin.saveConv(this.conv);
     if (this.selBtn) this.selBtn.remove();
+    // 释放外部修改监听
+    if (this.modifyRef) {
+      this.app.vault.offref(this.modifyRef);
+      this.modifyRef = null;
+    }
     this.contentEl.empty();
+  }
+
+  /** vault 修改监听引用（agent 外部改 conv 时同步面板） */
+  private modifyRef: ReturnType<typeof this.app.vault.on> | null = null;
+  /** 等待回答结束后再重载（busy 时不打断） */
+  private pendingExternalReload = false;
+
+  /** 注册 conv 外部修改监听：agent 等外部进程改 .conv.json 时面板自动同步。
+   * 内容与内存一致 = 自身保存（跳过）；不一致 = 外部修改（重载）。 */
+  private registerConvWatcher() {
+    if (this.modifyRef) return;
+    const ref = this.app.vault.on("modify", async (file) => {
+      const folder = this.plugin.workspaceFolder(this.currentWorkspace).replace(/\/+$/, "");
+      if (file.path !== `${folder}/.conv.json`) return;
+      try {
+        const disk = await this.app.vault.adapter.read(file.path);
+        if (disk === serializeConv(this.conv)) return; // 自身保存
+        if (this.busy) {
+          this.pendingExternalReload = true;
+          return;
+        }
+        const next = await this.plugin.loadConv(this.currentWorkspace);
+        this.conv = next;
+        this.lastRenderedMapId = null;
+        await this.renderAll();
+        this.setStatus("检测到会话文件被外部修改，已同步");
+      } catch (e) {
+        // 读取/解析失败忽略
+      }
+    });
+    this.modifyRef = ref;
   }
 
   /**
@@ -358,6 +483,39 @@ export class TutorView extends ItemView {
       switchThread(this.conv, active.id);
     }
     this.setStatus("已选中原文，请输入你的问题");
+    this.updateChips();
+  }
+
+  /**
+   * 上下文 chips 渲染（P0-1A）：pendingAnchor 存在时在输入区上方显示
+   * 「📖 文件名 + 引用前 30 字」chip，可点击跳转、× 移除（移除后该消息不带锚点发送）。
+   */
+  private updateChips() {
+    if (!this.chipsEl) return;
+    this.chipsEl.empty();
+    if (!this.pendingAnchor) {
+      this.chipsEl.style.display = "none";
+      return;
+    }
+    const src = this.pendingAnchor;
+    const file = src.split("/").pop() ?? src;
+    const quote = (this.branchOrigin || "").replace(/\s+/g, " ").trim().slice(0, 30);
+    const chip = this.chipsEl.createEl("button", { cls: "edge-tutor-context-chip", attr: { title: "点击跳转到原文位置" } });
+    const label = chip.createSpan({ text: `📖 ${file}${quote ? `：${quote}` : ""}` });
+    label.addClass("edge-tutor-chip-text");
+    const x = chip.createEl("span", { text: "×", cls: "edge-tutor-chip-x", attr: { title: "移除引用（该消息将不带锚点发送）" } });
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.pendingAnchor = null;
+      this.branchOrigin = "";
+      this.inputEl.placeholder = "追问或提问…（Enter 发送，Shift+Enter 换行）";
+      this.updateChips();
+      this.setStatus("已移除引用来源");
+    });
+    chip.addEventListener("click", () => {
+      if (this.pendingAnchor) void this.navigateToTextAnchor(this.pendingAnchor, this.branchOrigin || undefined);
+    });
+    this.chipsEl.style.display = "flex";
   }
 
   /**
@@ -392,15 +550,40 @@ export class TutorView extends ItemView {
     // 消息区（按视图模式）
     const prevScroll = this.messageScroll[this.viewMode];
     this.msgContainer.empty();
-    const msgs = messagesForView(this.conv, this.viewMode);
+    const mode = this.viewMode;
+    const msgs = messagesForView(this.conv, mode);
     if (msgs.length === 0) {
       this.appendWelcome();
     } else {
+      // 懒渲染分页（P2-6）：消息 >100 条时只渲染最近 50 条，顶部留「加载更早消息」按钮
+      const total = msgs.length;
+      let start = 0;
+      if (total > 100) {
+        const saved = this.loadedStart[mode] ?? Math.max(0, total - 50);
+        this.loadedStart[mode] = Math.min(saved, total - 50);
+        start = this.loadedStart[mode]!;
+      }
+      if (start > 0) {
+        const loadBtn = this.msgContainer.createEl("button", {
+          text: `⬆ 加载更早消息（还有 ${start} 条）`,
+          cls: "edge-tutor-load-more",
+          attr: { title: "向前加载 50 条更早消息" },
+        });
+        loadBtn.addEventListener("click", () => {
+          this.loadedStart[mode] = Math.max(0, start - 50);
+          // 记住阅读位置：渲染后把「加载前窗口的第一条消息」滚回原位置
+          const anchorMsg = msgs[start];
+          void this.renderAll().then(() => {
+            if (anchorMsg) this.scrollToMessageIndex(this.conv.messages.indexOf(anchorMsg));
+          });
+        });
+      }
       let lastLineId: string | null = null;
-      for (const m of msgs) {
+      for (let i = start; i < total; i++) {
+        const m = msgs[i];
         // 上下文分隔（Zotero: showContext —— 换线程时显示线程标题）
         const lineId = messageLineId(m);
-        const showContext = this.viewMode !== "node" && lineId !== lastLineId;
+        const showContext = mode !== "node" && lineId !== lastLineId;
         if (showContext) lastLineId = lineId;
         const thread = lineId ? this.conv.reading.threads.find((t) => t.id === lineId) : undefined;
         const globalIndex = this.conv.messages.indexOf(m);
@@ -415,16 +598,14 @@ export class TutorView extends ItemView {
     // 当前思维链区
     this.renderCurrent();
 
-    // 导图（有线程自动显示，对齐 Zotero）
-    if (this.conv.reading.threads.length > 0 && this.mapContainer.style.display === "none") {
-      this.mapContainer.style.display = "block";
-      this.mapTitle.style.display = "block";
-    }
-    if (this.mapContainer.style.display !== "none" && this.conv.reading.threads.length > 0) {
-      await this.renderWorkflow();
-    } else {
-      this.mapContainer.style.display = "none";
-      this.mapTitle.style.display = "none";
+    // 导图（仅由 🗺️ 按钮控制显示，不自动弹出；打开状态下有新线程则刷新）
+    if (this.mapContainer.style.display !== "none") {
+      if (this.conv.reading.threads.length > 0) {
+        await this.renderWorkflow();
+      } else {
+        this.mapContainer.style.display = "none";
+        this.mapTitle.style.display = "none";
+      }
     }
 
     // 停车场
@@ -449,8 +630,9 @@ export class TutorView extends ItemView {
    * 打开 markdown 文件并定位到引用文本。
    * Obsidian 适配：Zotero 是 PDF 页内框选定位，Obsidian 无此能力 →
    * 改为打开文件后搜索引用文本，滚动定位 + 临时高亮。
+   * 支持行号优先定位（教材检索引用【📖 文件:行】）。
    */
-  private async navigateToTextAnchor(sourcePath: string, quote?: string) {
+  private async navigateToTextAnchor(sourcePath: string, quote?: string, line?: number) {
     const f = this.app.vault.getAbstractFileByPath(sourcePath);
     if (!(f instanceof TFile)) {
       new Notice("锚点文件不存在：" + sourcePath);
@@ -458,11 +640,27 @@ export class TutorView extends ItemView {
     }
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(f);
-    if (!quote) return;
     // 给渲染一个 tick，等编辑器就绪
     await new Promise((r) => setTimeout(r, 120));
     const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
     if (!editor) return;
+    // 行号定位（教材检索引用）：直接跳行 + 选中该行高亮
+    if (line && line > 0) {
+      const target = Math.min(Math.max(0, line - 1), editor.lineCount() - 1);
+      const from = { line: target, ch: 0 };
+      const to = { line: target, ch: editor.getLine(target).length };
+      editor.setSelection(from, to);
+      editor.scrollIntoView({ from, to }, true);
+      editor.focus();
+      window.setTimeout(() => {
+        try {
+          const cur = editor.getCursor();
+          editor.setSelection(cur, cur);
+        } catch (e) { /* 忽略 */ }
+      }, 2500);
+      return;
+    }
+    if (!quote) return;
     // 归一化：去掉多余空白，匹配时也容错空白差异
     const norm = (s: string) => String(s).replace(/\s+/g, " ").trim();
     const needle = norm(quote).slice(0, 80);
@@ -598,6 +796,7 @@ export class TutorView extends ItemView {
     const guide = this.pendingGuide;
     this.pendingAnchor = null;
     this.pendingGuide = null;
+    this.updateChips();
 
     if (guide) {
       // 方向导引只是探索起点，选中后创建独立根线程，避免把推荐误变成课程路线。
@@ -654,6 +853,54 @@ export class TutorView extends ItemView {
     const sysPrompt = buildSystemPrompt();
     const history: ChatMessage[] = [{ role: "system", content: sysPrompt }];
     const lastUser = [...this.conv.messages].reverse().find((m) => m.role === "user");
+    // @ 引用笔记上下文（P1-3）：把问题里 [[笔记]] 的内容读进 system 块
+    if (lastUser) {
+      const links = extractNoteLinks(lastUser.content);
+      if (links.length > 0) {
+        const files = this.app.vault.getMarkdownFiles();
+        const notes: { path: string; content: string }[] = [];
+        for (const name of links) {
+          const hit = files.find((f) => f.path === name || f.path === `${name}.md` || f.basename === name);
+          if (!hit || notes.some((n) => n.path === hit.path)) continue;
+          try {
+            notes.push({ path: hit.path, content: await this.app.vault.cachedRead(hit) });
+          } catch (e) {
+            console.error("读取 @ 引用笔记失败", hit.path, e);
+          }
+        }
+        if (notes.length > 0) {
+          history.unshift({ role: "system", content: buildNoteContextBlocks(notes) });
+        }
+      }
+    }
+    // 教材检索（开关开启时）：检索结果注入 system 上下文，不进 conv.messages、不显示
+    let searchNote = "";
+    if (lastUser && this.plugin.settings.textbookSearchEnabled) {
+      this.setStatus("🔍 正在教材检索（语义定位教材原文，约 15-45 秒）…");
+      const hit = await this.plugin.semanticTextbookSearch(lastUser.content);
+      if (hit.found) {
+        history.unshift({
+          role: "system",
+          content: [
+            "【教材检索结果】（由检索代理从教材原文定位，行号可跳转核对）",
+            hit.text,
+            "",
+            "回答规则：",
+            "1. 基于引用的教材原文回答，引用处标注【📖 文件:行】（如【📖 第6讲.md:364】）。",
+            "2. 引用覆盖不到的部分，明确说「教材中未直接对应，以下是基于已有知识的推断」。",
+            "3. 不编造原文——引用的文字必须来自上面的教材引用。",
+          ].join("\n"),
+        });
+        searchNote = `（已检索 ${hit.count} 处教材原文）`;
+      } else {
+        // 未命中：注入说明，避免模型防御性表述（"我看不到教材"之类）
+        history.unshift({
+          role: "system",
+          content:
+            "【教材检索】本次未在教材中定位到与问题直接相关的原文（可能教材未覆盖该内容或表述差异）。请直接基于已有知识正常回答，不要声明「看不到教材/没有教材目录/只能基于截图分析」之类的话。",
+        });
+      }
+    }
     const isFollowup = !!lastUser && !!lastUser.lineId && lastUser.lineId === this.conv.reading.activeId;
     const branchInstr = branchInstruction(this.conv, isFollowup);
     for (let i = 0; i < this.conv.messages.length; i++) {
@@ -669,16 +916,79 @@ export class TutorView extends ItemView {
       }
     }
 
-    // 流式渲染：消息区先显示占位气泡，逐字更新纯文本（流畅），完成后 Markdown 渲染
+    // 流式段落增量渲染（P1-4）：
+    // 已完整的段落按 Markdown 渐进渲染（标题/列表/代码块可见），未完成的尾段保持纯文本；
+    // normalizeMath 只对完整段落做（半截 \( 会误伤，坑 8）；``` 围栏/公式未闭合的段落整段留待收尾。
     const streamingEl = this.appendMessageRaw({ role: "assistant", content: "" });
+    const streamContentEl = streamingEl.querySelector(".edge-tutor-msg-content") as HTMLElement;
+    const commitContainer = document.createElement("div");
+    commitContainer.className = "edge-tutor-stream-committed";
+    streamContentEl.appendChild(commitContainer);
     const streamTextEl = document.createElement("div");
     streamTextEl.className = "edge-tutor-stream-text";
-    streamingEl.querySelector(".edge-tutor-msg-content")!.appendChild(streamTextEl);
+    streamContentEl.appendChild(streamTextEl);
     let streamed = "";
+    let pending = "";
+    let lastRenderAt = 0;
     const followScroll = () => {
       const maxScroll = Math.max(0, this.msgContainer.scrollHeight - this.msgContainer.clientHeight);
       if (maxScroll - this.msgContainer.scrollTop <= 60) {
         this.msgContainer.scrollTop = this.msgContainer.scrollHeight;
+      }
+    };
+    /** 段落是否可提交：``` 围栏成对且 \( \) \[ \] 各自闭合 */
+    const paragraphReady = (t: string): boolean => {
+      let fences = 0;
+      for (const line of t.split("\n")) if (line.trimStart().startsWith("```")) fences++;
+      if (fences % 2 !== 0) return false;
+      return (
+        (t.split("\\(").length - 1) === (t.split("\\)").length - 1) &&
+        (t.split("\\[").length - 1) === (t.split("\\]").length - 1)
+      );
+    };
+    /** 按 \n\n 切分 pending：可提交的段落渲染为 Markdown，尾部未完整段落保留纯文本 */
+    const flushStreamRender = () => {
+      lastRenderAt = Date.now();
+      if (!pending) return;
+      const parts = pending.split("\n\n");
+      const done: string[] = [];
+      let rest = "";
+      for (let i = 0; i < parts.length; i++) {
+        if (i < parts.length - 1 && paragraphReady(parts[i])) {
+          done.push(parts[i]);
+        } else {
+          // 未闭合段落（含其后所有内容）整体保留：围栏/公式可能在跨段之后才闭合
+          rest = parts.slice(i).join("\n\n");
+          break;
+        }
+      }
+      if (done.length > 0) {
+        pending = rest;
+        for (const p of done) {
+          const div = document.createElement("div");
+          div.className = "edge-tutor-md";
+          commitContainer.appendChild(div);
+          void MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => {
+            this.attachCitationButtons(div);
+            this.attachCodeCopyButtons(div);
+          });
+        }
+      }
+      streamTextEl.textContent = rest;
+      followScroll();
+    };
+    /** 流式收尾：最后一段也渲染为 Markdown */
+    const finalizeStreamRender = () => {
+      if (pending) {
+        const div = document.createElement("div");
+        div.className = "edge-tutor-md";
+        commitContainer.appendChild(div);
+        void MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => {
+          this.attachCitationButtons(div);
+          this.attachCodeCopyButtons(div);
+        });
+        pending = "";
+        streamTextEl.textContent = "";
       }
     };
     // 流式中途保存：每 ~3s 或每 ~1.5KB 增量持久化一次部分回答，
@@ -704,15 +1014,18 @@ export class TutorView extends ItemView {
       const answer = await streamCompletion(this.plugin.settings, history, {
         onDelta: (delta) => {
           streamed += delta;
-          // 流式期间用纯文本（快、流畅）；含公式时转 $ 让最终渲染正确
-          streamTextEl.textContent = streamed;
-          followScroll();
+          pending += delta;
+          // 200ms 节流：完整段落渐进渲染为 Markdown，尾段保持纯文本
+          if (Date.now() - lastRenderAt >= 200) flushStreamRender();
+          else followScroll();
           const now = Date.now();
           if (streamed.length - lastPersistLen >= 1500 || (now - lastPersistAt >= 3000 && streamed.length > lastPersistLen)) {
             persistPartial();
           }
         },
       });
+      // 收尾渲染最后一段
+      finalizeStreamRender();
       // 回答归属到最后一个用户消息的线程：
       // 若流式中途已持久化过部分回答，直接更新该消息为完整回答（避免重复消息）
       const partial = getPartial();
@@ -723,6 +1036,8 @@ export class TutorView extends ItemView {
       } else {
         assistantMsg = pushMessage(this.conv, "assistant", answer, { lineId: lastUser?.lineId });
       }
+      // 回答回显「基于 📖 …」：继承提问的锚点（P0-1B）
+      if (lastUser?.anchor && !assistantMsg.anchor) assistantMsg.anchor = lastUser.anchor;
       await this.plugin.saveConv(this.conv);
       // 回答收尾（Zotero finishAnswer）：更新理解沉淀 + 最近追问
       if (lastUser) finishAnswer(this.conv, assistantMsg, lastUser.content);
@@ -747,21 +1062,123 @@ export class TutorView extends ItemView {
       this.busy = false;
       this.sendBtn.setText("发送");
       this.sendBtn.disabled = false;
+      if (searchNote) this.setStatus(`回答完成 ${searchNote}`);
+      // 回答期间外部修改了 conv → 现在同步
+      if (this.pendingExternalReload) {
+        this.pendingExternalReload = false;
+        try {
+          const next = await this.plugin.loadConv(this.currentWorkspace);
+          this.conv = next;
+          await this.renderAll();
+          this.setStatus("检测到会话文件被外部修改，已同步");
+        } catch (e) {
+          // 忽略
+        }
+      }
     }
     this.scrollToBottom();
   }
 
+  /**
+   * 重新生成某条 AI 回答（网络波动/回答不佳时使用）：
+   * 用该回答对应的提问重建历史（提问及其之前），流式重新生成并替换原回答。
+   */
+  private async regenerate(target: ConvMessage) {
+    if (this.busy) {
+      new Notice("有回答生成中，请稍候");
+      return;
+    }
+    const tIdx = this.conv.messages.indexOf(target);
+    if (tIdx < 0) return;
+    // 找该回答对应的最近一条 user 消息
+    let uIdx = -1;
+    for (let i = tIdx - 1; i >= 0; i--) {
+      if (this.conv.messages[i].role === "user") {
+        uIdx = i;
+        break;
+      }
+    }
+    if (uIdx < 0) {
+      new Notice("找不到对应的提问");
+      return;
+    }
+    const userMsg = this.conv.messages[uIdx];
+
+    this.busy = true;
+    this.sendBtn.setText("思考中…");
+    this.sendBtn.disabled = true;
+    this.setStatus("🔄 重新生成中…");
+
+    // 历史：从开头到该 user 消息（含），分支语境注入
+    const history: ChatMessage[] = [{ role: "system", content: buildSystemPrompt() }];
+    const isFollowup = !!userMsg.lineId && userMsg.lineId === this.conv.reading.activeId;
+    const branchInstr = branchInstruction(this.conv, isFollowup);
+    for (let i = 0; i <= uIdx; i++) {
+      const m = this.conv.messages[i];
+      if (m.role === "user") {
+        const instr = i === uIdx && branchInstr ? `\n\n${branchInstr}` : "";
+        history.push({ role: "user", content: m.content + instr });
+      } else {
+        history.push({ role: "assistant", content: m.content });
+      }
+    }
+
+    // 在原消息位置流式渲染
+    const msgEl = this.msgContainer.querySelector(`[data-msg-index="${tIdx}"]`);
+    const streamEl = msgEl ?? this.appendMessageRaw({ role: "assistant", content: "" });
+    const contentEl = streamEl.querySelector(".edge-tutor-msg-content") as HTMLElement;
+    contentEl.empty();
+    const streamTextEl = document.createElement("div");
+    streamTextEl.className = "edge-tutor-stream-text";
+    contentEl.appendChild(streamTextEl);
+    let streamed = "";
+
+    try {
+      const answer = await streamCompletion(this.plugin.settings, history, {
+        onDelta: (delta) => {
+          streamed += delta;
+          streamTextEl.textContent = streamed;
+          this.scrollToBottom();
+        },
+      });
+      target.content = answer;
+      delete target.verbatimContent;
+      if (userMsg.anchor) target.anchor = userMsg.anchor;
+      finishAnswer(this.conv, target, userMsg.content);
+      await this.plugin.saveConv(this.conv);
+      this.renderAll();
+      this.setStatus("🔄 已重新生成");
+    } catch (e) {
+      if (streamed) {
+        target.content = streamed + `\n\n⚠️ 回答中断：${(e as Error).message.slice(0, 120)}`;
+        await this.plugin.saveConv(this.conv);
+        this.renderAll();
+        this.setStatus("⚠️ 回答中断，可再次重新生成");
+      } else {
+        this.renderAll();
+        new Notice("重新生成失败：" + (e as Error).message.slice(0, 100));
+      }
+    } finally {
+      this.busy = false;
+      this.sendBtn.setText("发送");
+      this.sendBtn.disabled = false;
+    }
+  }
+
   /** 方向指引 */
-  /** 方向指引（范围可选：全书 / 当前位置附近；感知掌握深度） */
+  /** 方向指引（范围 + 模式可选；感知认知链结构，节点是路标不是终点） */
   private async requestGuide() {
     if (this.busy) return;
-    // 先选范围
-    const scope = await new ScopeModal(this.app).openScope();
-    if (!scope) return;
+    // 先选范围 + 模式
+    const picked = await new ScopeModal(this.app).openScope();
+    if (!picked) return;
+    const { scope, mode } = picked;
     this.busy = true;
     const active = activeThread(this.conv);
     const scopeLabel = scope === "whole" ? "全书" : "当前位置附近";
-    pushMessage(this.conv, "user", `🧭 请给我方向指引（范围：${scopeLabel}）：推荐值得深入的高价值入口。`, { lineId: active?.id });
+    const modeLabel =
+      mode === "deepen" ? "深化当前链" : mode === "frontier" ? "全书新域" : "混合";
+    pushMessage(this.conv, "user", `🧭 请给我方向指引（范围：${scopeLabel}；模式：${modeLabel}）：推荐值得深入的高价值入口。`, { lineId: active?.id });
     await this.plugin.saveConv(this.conv);
     this.renderAll();
     // 流式占位气泡
@@ -786,22 +1203,30 @@ export class TutorView extends ItemView {
 
     try {
       const toc = await this.plugin.readToc();
-      // 掌握感知的认知地图摘要
-      const map = cognitiveMapSummary(this.conv);
+      // 认知地图来源：whole 聚合所有工作区（完整图景）；nearby 用当前工作区（保持"附近"精度）
+      let mapText: string;
+      let locked: string[];
+      if (scope === "whole") {
+        const g = await this.plugin.buildGlobalMapText();
+        mapText = g.text;
+        locked = g.locked;
+      } else {
+        const map = cognitiveMapSummary(this.conv);
+        mapText = map.summaryText;
+        locked = map.locked;
+      }
       // 面板打开后，Obsidian 的 active view 通常是本面板，因此单独寻找当前阅读页。
-      const readingAnchor = this.plugin.getCurrentReadingAnchor() ?? (map.activeAnchorPath
-        ? { sourcePath: map.activeAnchorPath, quote: "" }
-        : null);
+      const readingAnchor = this.plugin.getCurrentReadingAnchor() ?? null;
       const guideMessages: ChatMessage[] = [
-        { role: "system", content: buildGuideSystemPrompt(scope) },
+        { role: "system", content: buildGuideSystemPrompt(scope, mode) },
         {
           role: "user",
           content: [
             "【教材总目录】",
             toc.slice(0, 6000),
             "",
-            "【我的认知地图（含掌握深度）】",
-            map.summaryText,
+            "【我的认知地图（节点树：缩进=层级，含摘要与状态；whole 模式含全部工作区）】",
+            mapText,
             "",
             scope === "nearby" && readingAnchor
               ? [
@@ -809,12 +1234,12 @@ export class TutorView extends ItemView {
                 readingAnchor.quote ? `当前段落/选中文本：${readingAnchor.quote}` : "",
               ].filter(Boolean).join("\n")
               : "",
-            map.active ? `【当前活跃线程】${map.active}` : "",
-            map.mastered.length ? `【已掌握，勿重复推荐】${map.mastered.join(" / ")}` : "",
+            mode === "deepen" || mode === "mixed" ? `【当前工作区】${this.currentWorkspace === "main" ? "默认" : this.currentWorkspace}` : "",
+            locked.length ? `【封顶链（🔒）】${locked.join(" / ")}` : "",
             "",
             scope === "nearby"
-              ? "请在当前位置附近推荐 3-5 个值得深入的高价值入口。"
-              : "请推荐 3-5 个全书范围内值得深入的高价值入口。",
+              ? "请在当前位置附近推荐 2-4 个值得深入的高价值入口。"
+              : "请推荐 2-4 个全书范围内值得深入的高价值入口。",
           ].filter(Boolean).join("\n"),
         },
       ];
@@ -881,6 +1306,54 @@ export class TutorView extends ItemView {
     new Notice("✅ 认知节点已沉淀");
   }
 
+  /** 清屏确认：检测未沉淀对话 → 自动备份 → 清空 */
+  private async confirmClear() {
+    const hasContent = this.conv.messages.length > 0 || this.conv.reading.threads.length > 0;
+    if (!hasContent) {
+      new Notice("当前对话已经是空的");
+      return;
+    }
+    const hasUnsaved = await this.hasUnsavedConversation();
+    const modal = new ClearModal(this.app, hasUnsaved);
+    modal.onBackupAndClear = async () => {
+      await this.plugin.exportWorkspace("json");
+      await this.doClear();
+    };
+    modal.onSaveAndClear = async () => {
+      await this.saveConversation();
+      await this.plugin.exportWorkspace("json");
+      await this.doClear();
+    };
+    modal.open();
+  }
+
+  /** 是否有未沉淀的对话：最后一条消息时间 > 节点目录里最新文件时间 */
+  private async hasUnsavedConversation(): Promise<boolean> {
+    const lastMsg = this.conv.messages[this.conv.messages.length - 1];
+    if (!lastMsg) return false;
+    const folder = this.plugin.workspaceFolder(this.currentWorkspace).replace(/\/+$/, "");
+    const files = this.app.vault.getMarkdownFiles();
+    let latest = 0;
+    for (const f of files) {
+      if (f.path === folder || f.path.startsWith(folder + "/")) {
+        const mtime = f.stat?.mtime ?? 0;
+        if (mtime > latest) latest = mtime;
+      }
+    }
+    return lastMsg.ts > latest;
+  }
+
+  /** 真正执行清屏 */
+  private async doClear() {
+    this.conv.messages = [];
+    this.conv.reading.threads = [];
+    this.conv.reading.activeId = null;
+    this.conv.reading.parkingLot = [];
+    await this.plugin.saveConv(this.conv);
+    this.renderAll();
+    new Notice("已清空当前对话（节点文件未受影响，已自动备份）");
+  }
+
   /** 暂存问题到停车场 */
   private async parkInput() {
     const text = this.inputEl.value.trim();
@@ -939,7 +1412,7 @@ export class TutorView extends ItemView {
     this.renderSearchResults();
   }
 
-  private navigateSearchHit(index: number) {
+  private async navigateSearchHit(index: number) {
     const hits = this.searchHits;
     if (!hits.length) return;
     if (index < 0) index = hits.length - 1;
@@ -960,9 +1433,9 @@ export class TutorView extends ItemView {
       void this.plugin.saveConv(this.conv);
     }
     this.searchCursor = index;
-    // 滚动到命中消息
+    // 滚动到命中消息（P2-6：目标可能不在懒渲染窗口内，先确保加载）
     if (hit.messageIndex >= 0) {
-      const target = this.msgContainer.querySelector(`[data-msg-index="${hit.messageIndex}"]`);
+      const target = await this.ensureMessageLoaded(hit.messageIndex);
       if (target) target.scrollIntoView({ block: "center", behavior: "smooth" });
     }
     this.renderSearchResults();
@@ -1036,14 +1509,18 @@ export class TutorView extends ItemView {
   }
 
   /** 刷新工作区下拉框 */
-  private async refreshWorkspaceSelect() {    const workspaces = await this.plugin.discoverWorkspaces();
+  private async refreshWorkspaceSelect() {
+    const workspaces = await this.plugin.discoverWorkspaces();
     this.wsSelect.empty();
+    // 显示优化：教材容器用 📘 前缀，子工作区缩进显示
     for (const ws of workspaces) {
-      const opt = this.wsSelect.createEl("option", {
-        value: ws,
-        text: ws === "main" ? "默认工作区" : ws,
-      });
+      const text = ws === "main" ? "默认工作区" : ws.includes("/") ? `📘 ${ws}` : `📘 ${ws}`;
+      const opt = this.wsSelect.createEl("option", { value: ws, text });
       if (ws === this.currentWorkspace) opt.setAttribute("selected", "selected");
+    }
+    // 当前工作区不在列表（迁移/改名）→ 自动切到第一个可用工作区（onOpen 会加载它）
+    if (workspaces.length > 0 && !workspaces.includes(this.currentWorkspace)) {
+      this.currentWorkspace = workspaces[0];
     }
   }
 
@@ -1211,17 +1688,20 @@ export class TutorView extends ItemView {
         await this.plugin.saveConv(conv);
         this.renderAll();
       });
-      act("✓", t.mastery === "mastered" ? "已标记掌握，点击取消" : "标记为「已掌握」（方向导引将不再推荐）", async () => {
+      act("🔒", t.mastery === "mastered" ? "已封顶，点击取消" : "此链封顶（导引暂不深化此链，可随时取消）", async () => {
         t.mastery = t.mastery === "mastered" ? "exploring" : "mastered";
         t.updatedAt = new Date().toISOString();
         await this.plugin.saveConv(conv);
+        // 持久化到节点 frontmatter（重建会话时恢复封顶状态）
+        await this.plugin.setNodeLocked(this.currentWorkspace, t.title, t.mastery === "mastered");
         this.renderAll();
-        this.setStatus(t.mastery === "mastered" ? `「${t.title}」已标记为已掌握` : `「${t.title}」已取消掌握标记`);
+        this.setStatus(t.mastery === "mastered" ? `「${t.title}」已封顶（导引将聚焦其他链）` : `「${t.title}」已解除封顶`);
       });
       act("📋", "复制此节点及其全部分支", () => {
         const subtree = collectSubtree(conv, t.id);
         const ids = new Set(subtree.map((s) => s.id));
         this.branchClipboard = subtree;
+        this.branchClipboardWs = this.currentWorkspace;
         this.branchClipboardMessages = conv.messages.filter((m) => m.lineId && ids.has(m.lineId));
         this.setStatus(`已复制 ${subtree.length} 个节点（含 ${this.branchClipboardMessages.length} 条消息），在任何节点上点「粘贴」可挂入`);
       });
@@ -1254,6 +1734,22 @@ export class TutorView extends ItemView {
         await this.plugin.saveConv(conv);
         this.renderAll();
         this.setStatus(`已粘贴 ${this.branchClipboard.length} 个节点到「${t.title}」之下`);
+        // 跨工作区移动：提示删除源工作区的节点
+        const srcWs = this.branchClipboardWs;
+        const srcIds = this.branchClipboard.map((s) => s.id);
+        if (srcWs && srcWs !== this.currentWorkspace && srcIds.length > 0) {
+          const srcTitles = this.branchClipboard.map((s) => s.title || s.rootQuestion).slice(0, 3).join("、");
+          const modal = new ConfirmModal(this.app, "删除源工作区的节点？", [
+            `已把分支粘贴到「${this.currentWorkspace}」。`,
+            `是否同时删除「${srcWs}」中的 ${srcIds.length} 个源节点（${srcTitles}${this.branchClipboard.length > 3 ? "…" : ""}）？`,
+            "删除会连带移除消息和节点文件（进回收站）。",
+          ].join("\n"));
+          modal.onConfirm = async () => {
+            const n = await this.plugin.deleteThreadsWithFiles(srcWs, srcIds);
+            new Notice(`已从「${srcWs}」删除 ${n} 个源节点`);
+          };
+          modal.open();
+        }
       });
       act("📝", "改写摘要（理解沉淀）", async () => {
         const v = await new PromptModal(this.app, "改写摘要（理解沉淀）", "", t.summary || "").openPrompt();
@@ -1263,12 +1759,23 @@ export class TutorView extends ItemView {
         await this.plugin.saveConv(conv);
         this.renderAll();
       });
-      act("🗑️", "删除此节点及其全部分支（消息仍保留）", async () => {
-        const n = 1 + layout.edges.filter((e) => e.from === t.id).length;
-        if (!window.confirm(`删除「${t.title || t.rootQuestion}」及其 ${n} 个子分支？\n删除后消息仍保留在对话记录中。`)) return;
-        removeThread(conv, t.id);
-        await this.plugin.saveConv(conv);
-        this.renderAll();
+      act("🗑️", "删除此节点及其全部分支（含消息与节点文件，进回收站）", async () => {
+        const subtree = collectSubtree(conv, t.id);
+        const ids = subtree.map((s) => s.id);
+        const modal = new ConfirmModal(
+          this.app,
+          "删除节点？",
+          `删除「${t.title || t.rootQuestion}」及其 ${ids.length - 1} 个子分支？\n将同步删除消息与节点文件（进回收站可找回）。`,
+          "确认删除"
+        );
+        modal.onConfirm = async () => {
+          // 三处同步删除：线程 + 消息 + 节点文件（内部已保存 conv）
+          await this.plugin.deleteThreadsWithFiles(this.currentWorkspace, ids);
+          this.conv = await this.plugin.loadConv(this.currentWorkspace);
+          this.renderAll();
+          this.setStatus(`已删除 ${ids.length} 个节点（含消息与文件）`);
+        };
+        modal.open();
       });
 
       // 拖拽重组（Zotero：拖到节点=变子，拖空白=回主干）
@@ -1404,8 +1911,21 @@ export class TutorView extends ItemView {
         const x = rc.left + rc.width / 2 - 42;
         let y = rc.top - 34;
         if (y < 6) y = rc.bottom + 8;
-        selBtn.style.left = Math.max(4, x) + "px";
-        selBtn.style.top = Math.max(4, y) + "px";
+        // 避让输入框：按钮若与输入区相交（会挡住点击）→ 不显示
+        const btnRect = { left: Math.max(4, x), top: Math.max(4, y), width: 84, height: 28 };
+        const inputRect = this.inputRowEl?.getBoundingClientRect();
+        if (
+          inputRect &&
+          btnRect.left < inputRect.right &&
+          btnRect.left + btnRect.width > inputRect.left &&
+          btnRect.top < inputRect.bottom &&
+          btnRect.top + btnRect.height > inputRect.top
+        ) {
+          selBtn.style.display = "none";
+          return;
+        }
+        selBtn.style.left = btnRect.left + "px";
+        selBtn.style.top = btnRect.top + "px";
         selBtn.style.display = "block";
       } catch (e) {
         selBtn.style.display = "none";
@@ -1468,6 +1988,7 @@ export class TutorView extends ItemView {
         this.inputEl.placeholder = "继续这条思路…";
       }
       this.setStatus("已恢复未发送的草稿。");
+      this.updateChips();
     }
   }
 
@@ -1498,7 +2019,13 @@ export class TutorView extends ItemView {
       content: m.content,
       anchor: m.anchor,
       anchorQuote: ctx.thread?.anchor?.quote,
+      agent: m.agent,
       messageIndex: ctx.messageIndex,
+      // 普通 AI 回答可重新生成（导引/执行结果除外）
+      onRegenerate:
+        m.role === "assistant" && !m.agent && !m.content.trimStart().startsWith("🧭")
+          ? () => void this.regenerate(m)
+          : undefined,
       onEdit: async (el, content) => {
         const editor = el.createEl("textarea", { cls: "edge-tutor-edit-area", attr: { rows: "6" } });
         editor.value = content;
@@ -1514,6 +2041,17 @@ export class TutorView extends ItemView {
         cancel.addEventListener("click", () => this.renderAll());
         editor.focus();
       },
+      onDelete: () => {
+        // 删除确认用 Modal（坑 1：原生 confirm 对话框会被 Obsidian 拦截）
+        const modal = new ConfirmModal(this.app, "删除这条消息？", "将删除该条对话消息（已沉淀的节点笔记不受影响）。", "确认删除");
+        modal.onConfirm = () => {
+          removeMessage(this.conv, m);
+          void this.plugin.saveConv(this.conv);
+          this.renderAll();
+          this.setStatus("已删除该条消息");
+        };
+        modal.open();
+      },
     });
   }
 
@@ -1524,21 +2062,33 @@ export class TutorView extends ItemView {
     anchor?: string;
     anchorQuote?: string;
     guideEntries?: GuideEntry[];
+    agent?: boolean;
     messageIndex?: number;
+    onRegenerate?: () => void;
     onEdit?: (el: HTMLElement, content: string) => void;
+    onDelete?: () => void;
   }): HTMLElement {
     const el = this.msgContainer.createEl("div", { cls: `edge-tutor-msg edge-tutor-${opts.role}` });
+    if (opts.agent) el.classList.add("edge-tutor-msg-agent");
     if (typeof opts.messageIndex === "number") el.setAttribute("data-msg-index", String(opts.messageIndex));
     const content = el.createEl("div", { cls: "edge-tutor-msg-content" });
+    if (opts.agent) content.createEl("div", { text: "🤖 执行结果", cls: "edge-tutor-agent-badge" });
 
     if (opts.guideEntries && opts.guideEntries.length > 0) {
       content.createEl("p", { text: opts.content });
       for (const e of opts.guideEntries) {
         const box = content.createEl("div", { cls: "edge-tutor-entry" });
-        const heading = box.createEl("h5", { text: `${e.id} ${e.title}` });
+        const heading = box.createEl("h5");
+        const badge = heading.createSpan({
+          text: e.type === "deepen" ? "🔻 深化" : "🆕 新域",
+          cls: "edge-tutor-entry-badge" + (e.type === "deepen" ? " deepen" : ""),
+        });
+        heading.createSpan({ text: `${e.id} ${e.title}` });
         if (e.jiang) heading.createSpan({ text: ` · ${e.jiang}`, cls: "edge-tutor-entry-meta" });
         const rows: [string, string][] = [];
-        if (e.question) rows.push(["核心问题", e.question]);
+        if (e.type === "deepen" && e.anchorNode) rows.push(["锚定节点", `[[${e.anchorNode}]]`]);
+        if (e.question) rows.push(["下一堵墙", e.question]);
+        if (e.direction) rows.push(["延伸方向", e.direction]);
         if (e.whyWorthExploring) rows.push(["为什么值得追", e.whyWorthExploring]);
         if (e.entryPoint) rows.push(["自然切入口", e.entryPoint]);
         if (e.tensions.length) rows.push(["关键张力", e.tensions.join("；")]);
@@ -1562,25 +2112,69 @@ export class TutorView extends ItemView {
         });
       }
     } else if (opts.anchor) {
-      const bq = content.createEl("blockquote", { text: `📖 ${opts.anchor}` });
-      bq.classList.add("edge-tutor-anchor-quote");
+      // user 消息：大段引用原文（blockquote）；assistant 消息：底部「基于」小字回显（P0-1B）
       const src = opts.anchor;
       const quote = opts.anchorQuote;
-      bq.addEventListener("click", () => void this.navigateToTextAnchor(src, quote));
+      if (opts.role === "user") {
+        const bq = content.createEl("blockquote", { text: `📖 ${src}` });
+        bq.classList.add("edge-tutor-anchor-quote");
+        bq.addEventListener("click", () => void this.navigateToTextAnchor(src, quote));
+      }
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
-      void MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this);
+      void MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
+        this.attachCitationButtons(mdEl);
+        this.attachCodeCopyButtons(mdEl);
+      });
+      if (opts.role === "assistant") {
+        const ctx = el.createEl("div", { cls: "edge-tutor-msg-ctx" });
+        ctx
+          .createEl("button", { text: `基于 📖 ${src}`, cls: "edge-tutor-msg-ctx-btn", attr: { title: "点击跳转到原文位置" } })
+          .addEventListener("click", () => void this.navigateToTextAnchor(src, quote));
+      }
     } else {
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
-      void MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this);
+      void MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
+        this.attachCitationButtons(mdEl);
+        this.attachCodeCopyButtons(mdEl);
+      });
     }
 
-    // 编辑按钮（Zotero onEditMessage）
-    if (opts.onEdit) {
-      const editBtn = content.createEl("button", { text: "✏️ 编辑", cls: "edge-tutor-edit-btn" });
-      editBtn.addEventListener("click", () => {
-        content.empty();
-        opts.onEdit!(content, opts.content);
+    // 消息 hover 操作组（P0-2，仿节点 map-acts）：复制 / 编辑 / 重新生成 / 删除
+    if (opts.onEdit || opts.onRegenerate || opts.onDelete) {
+      const acts = el.createEl("div", { cls: "edge-tutor-msg-acts" });
+      const actBtn = (label: string, tip: string, handler: () => void | Promise<void>, danger = false) => {
+        const b = acts.createEl("button", {
+          text: label,
+          cls: "edge-tutor-msg-act" + (danger ? " danger" : ""),
+          attr: { title: tip },
+        });
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void handler();
+        });
+        return b;
+      };
+      actBtn("📋 复制", "复制这条消息内容", async () => {
+        try {
+          await navigator.clipboard.writeText(opts.content);
+          new Notice("已复制到剪贴板");
+        } catch (e) {
+          console.error("复制消息失败", e);
+          new Notice("复制失败，请手动选择复制");
+        }
       });
+      if (opts.onEdit) {
+        actBtn("✏️ 编辑", "编辑这条消息", () => {
+          content.empty();
+          opts.onEdit!(content, opts.content);
+        });
+      }
+      if (opts.onRegenerate) {
+        actBtn("🔄 重新生成", "重新生成这条回答（网络波动/回答不佳时使用）", () => opts.onRegenerate!());
+      }
+      if (opts.onDelete) {
+        actBtn("🗑️ 删除", "删除这条消息", () => opts.onDelete!(), true);
+      }
     }
     this.scrollToBottom();
     return el;
@@ -1591,10 +2185,91 @@ export class TutorView extends ItemView {
     this.appendMessageRaw(msg);
   }
 
+  /** 扫描回答中的引用标记【📖 文件:行】→ 可点击按钮（跳转教材行） */
+  private attachCitationButtons(container: HTMLElement) {
+    const re = /【📖\s*([^】]+?):(\d+)(?:-(\d+))?】/g;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+    for (const node of nodes) {
+      const text = node.nodeValue ?? "";
+      if (!text.includes("【📖")) continue;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      let m: RegExpExecArray | null;
+      re.lastIndex = 0;
+      let replaced = 0;
+      while ((m = re.exec(text)) !== null) {
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        const file = m[1].trim();
+        const line = parseInt(m[2], 10);
+        const btn = document.createElement("button");
+        btn.className = "edge-tutor-cite-btn";
+        btn.textContent = `📖 ${file}:${line}`;
+        btn.addEventListener("click", () => void this.navigateToTextAnchor(file, "", line));
+        frag.appendChild(btn);
+        replaced++;
+        last = m.index + m[0].length;
+      }
+      if (replaced > 0) {
+        frag.appendChild(document.createTextNode(text.slice(last)));
+        node.replaceWith(frag);
+      }
+    }
+  }
+
+  /** 代码块 hover 复制按钮（P2-5）：在 MarkdownRenderer.render 完成后调用 */
+  private attachCodeCopyButtons(container: HTMLElement) {
+    for (const pre of Array.from(container.querySelectorAll("pre"))) {
+      if (pre.querySelector(".edge-tutor-code-copy")) continue;
+      const code = pre.querySelector("code");
+      if (!code) continue;
+      pre.classList.add("edge-tutor-code-block");
+      const btn = document.createElement("button");
+      btn.className = "edge-tutor-code-copy";
+      btn.textContent = "📋";
+      btn.setAttribute("title", "复制代码");
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(code.textContent ?? "");
+          new Notice("已复制代码");
+        } catch (err) {
+          console.error("复制代码失败", err);
+          new Notice("复制失败，请手动选择复制");
+        }
+      });
+      pre.appendChild(btn);
+    }
+  }
+
   private scrollToBottom() {
     if (this.msgContainer) {
       this.msgContainer.scrollTop = this.msgContainer.scrollHeight;
     }
+  }
+
+  /** 滚动到指定消息（data-msg-index），保持其顶部贴合容器顶部（P2-6 懒渲染分页用） */
+  private scrollToMessageIndex(index: number) {
+    const el = this.msgContainer.querySelector(`[data-msg-index="${index}"]`);
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const cRect = this.msgContainer.getBoundingClientRect();
+    this.msgContainer.scrollTop += rect.top - cRect.top;
+  }
+
+  /** 确保某条消息在渲染窗口内（P2-6）：不在则调整窗口并重渲染，返回消息元素 */
+  private async ensureMessageLoaded(messageIndex: number): Promise<HTMLElement | null> {
+    let el = this.msgContainer.querySelector(`[data-msg-index="${messageIndex}"]`) as HTMLElement | null;
+    if (el) return el;
+    const msgs = messagesForView(this.conv, this.viewMode);
+    if (msgs.length > 100) {
+      const pos = msgs.findIndex((m) => this.conv.messages.indexOf(m) === messageIndex);
+      if (pos < 0) return null;
+      this.loadedStart[this.viewMode] = Math.max(0, pos - 25);
+    }
+    await this.renderAll();
+    return this.msgContainer.querySelector(`[data-msg-index="${messageIndex}"]`) as HTMLElement | null;
   }
 }
 
@@ -1681,11 +2356,91 @@ export class PromptModal extends Modal {
   }
 }
 
-/** 方向指引范围选择弹窗 */
-export class ScopeModal extends Modal {
-  private resolve!: (value: "whole" | "nearby" | null) => void;
+/** 确认弹窗（通用） */
+export class ConfirmModal extends Modal {
+  onConfirm: () => void = () => {};
+  private text: string;
+  private confirmText: string;
 
-  openScope(): Promise<"whole" | "nearby" | null> {
+  constructor(app: App, title: string, text: string, confirmText = "确认清空") {
+    super(app);
+    this.text = text;
+    this.confirmText = confirmText;
+    this.titleEl.setText(title);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("div", { text: this.text, cls: "edge-tutor-scope-desc" });
+    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    const ok = row.createEl("button", { text: this.confirmText, cls: "edge-tutor-mini mod-cta" });
+    ok.addEventListener("click", () => {
+      this.onConfirm();
+      this.close();
+    });
+    const cancel = row.createEl("button", { text: "取消", cls: "edge-tutor-mini" });
+    cancel.addEventListener("click", () => this.close());
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+/** 清屏确认弹窗：检测未沉淀对话，提供「沉淀并清」「备份并清」「取消」 */
+export class ClearModal extends Modal {
+  onBackupAndClear: () => void = () => {};
+  onSaveAndClear: () => void = () => {};
+  private hasUnsaved: boolean;
+
+  constructor(app: App, hasUnsaved: boolean) {
+    super(app);
+    this.hasUnsaved = hasUnsaved;
+    this.titleEl.setText("清空当前对话？");
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("div", {
+      text: [
+        "将删除当前工作区的全部对话记录和思维导图结构（.conv.json）。",
+        "已沉淀的节点笔记（.md 文件）不受影响。",
+        this.hasUnsaved ? "⚠️ 检测到最近的对话还没有沉淀为节点。" : "",
+        "无论哪种方式，清空前都会自动导出 JSON 备份到 _exports/，可随时恢复。",
+      ].filter(Boolean).join("\n"),
+      cls: "edge-tutor-scope-desc",
+    });
+    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    if (this.hasUnsaved) {
+      const save = row.createEl("button", { text: "💾 先沉淀再清屏", cls: "edge-tutor-mini mod-cta" });
+      save.addEventListener("click", () => {
+        this.onSaveAndClear();
+        this.close();
+      });
+    }
+    const backup = row.createEl("button", { text: "备份并清屏", cls: "edge-tutor-mini" });
+    backup.addEventListener("click", () => {
+      this.onBackupAndClear();
+      this.close();
+    });
+    const cancel = row.createEl("button", { text: "取消", cls: "edge-tutor-mini" });
+    cancel.addEventListener("click", () => this.close());
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+}
+
+/** 方向指引范围 + 模式选择弹窗 */
+export class ScopeModal extends Modal {
+  private resolve!: (value: { scope: "whole" | "nearby"; mode: GuideMode } | null) => void;
+
+  openScope(): Promise<{ scope: "whole" | "nearby"; mode: GuideMode } | null> {
     return new Promise((resolve) => {
       this.resolve = resolve;
       this.open();
@@ -1695,28 +2450,50 @@ export class ScopeModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: "方向指引范围" });
+    contentEl.createEl("h3", { text: "方向指引设置" });
     contentEl.createEl("div", {
-      text: "想在哪个范围内推荐值得深入的高价值入口？",
+      text: "先选模式（点击高亮），再选范围确定。不选模式则默认混合。",
       cls: "edge-tutor-scope-desc",
     });
 
+    // 模式行（点击高亮记录，不提交）
+    contentEl.createEl("h4", { text: "模式" });
+    const modeRow = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    const mkModeBtn = (text: string, value: GuideMode) => {
+      const b = modeRow.createEl("button", { text, cls: "edge-tutor-mini" });
+      b.addEventListener("click", () => {
+        this.pendingMode = value;
+        modeRow.querySelectorAll("button").forEach((x) => x.removeClass("mod-cta"));
+        b.addClass("mod-cta");
+      });
+      return b;
+    };
+    mkModeBtn("混合（深化+新域）", "mixed");
+    mkModeBtn("🔻 深化当前链", "deepen");
+    mkModeBtn("🆕 全书新域", "frontier");
+
+    // 范围行（点击提交）
+    contentEl.createEl("h4", { text: "范围" });
     const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
-    const whole = row.createEl("button", { text: "全书范围", cls: "edge-tutor-mini" });
-    whole.addEventListener("click", () => {
-      this.resolve("whole");
-      this.close();
-    });
-    const nearby = row.createEl("button", { text: "当前位置附近", cls: "edge-tutor-mini mod-cta" });
-    nearby.addEventListener("click", () => {
-      this.resolve("nearby");
-      this.close();
-    });
+    const whole = row.createEl("button", { text: "📖 全书范围", cls: "edge-tutor-mini mod-cta" });
+    whole.addEventListener("click", () => this.pick("whole"));
+    const nearby = row.createEl("button", { text: "📍 当前位置附近", cls: "edge-tutor-mini" });
+    nearby.addEventListener("click", () => this.pick("nearby"));
     const cancel = row.createEl("button", { text: "取消", cls: "edge-tutor-mini" });
-    cancel.addEventListener("click", () => {
-      this.resolve(null);
-      this.close();
-    });
+    cancel.addEventListener("click", () => this.closeResolve(null));
+  }
+
+  /** 模式选择（null=未选，提交时默认混合） */
+  private pendingMode: GuideMode | null = null;
+
+  private pick(scope: "whole" | "nearby") {
+    this.resolve({ scope, mode: this.pendingMode ?? "mixed" });
+    this.close();
+  }
+
+  private closeResolve(v: { scope: "whole" | "nearby"; mode: GuideMode } | null) {
+    this.resolve(v);
+    this.close();
   }
 
   onClose() {

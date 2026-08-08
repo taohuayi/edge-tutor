@@ -7,7 +7,7 @@
  *   - 消息带 lineId（归属线程），支持按视图过滤
  */
 
-import { ParkedQuestion } from "./tutor";
+import { CognitiveNode, ParkedQuestion, extractMentorResponse } from "./tutor";
 
 /** 会话消息（Zotero: messages[]，带 lineId 归属线程） */
 export interface ConvMessage {
@@ -20,6 +20,8 @@ export interface ConvMessage {
   anchor?: string;
   /** 原始 AI 输出（编辑前） */
   verbatimContent?: string;
+  /** 执行模式（agent）消息（对话/导引消息无此字段） */
+  agent?: boolean;
   ts: number;
 }
 
@@ -251,7 +253,7 @@ export function pushMessage(
   conv: Conv,
   role: "user" | "assistant",
   content: string,
-  opts: { anchor?: string; lineId?: string } = {}
+  opts: { anchor?: string; lineId?: string; agent?: boolean } = {}
 ): ConvMessage {
   const msg: ConvMessage = {
     id: "m" + Date.now().toString(36),
@@ -259,10 +261,54 @@ export function pushMessage(
     content,
     anchor: opts.anchor,
     lineId: opts.lineId,
+    agent: opts.agent,
     ts: Date.now(),
   };
   conv.messages.push(msg);
   return msg;
+}
+
+/** 删除一条消息（按引用匹配；返回是否找到并删除） */
+export function removeMessage(conv: Conv, msg: ConvMessage): boolean {
+  const idx = conv.messages.indexOf(msg);
+  if (idx < 0) return false;
+  conv.messages.splice(idx, 1);
+  return true;
+}
+
+/**
+ * 从节点列表构建会话（纯函数）：
+ * 节点 .md 是单一数据源，会话为空时（清屏/迁移）用它恢复线程树与消息。
+ * 节点按传入顺序编号 q1..qN；parentTitle 映射为 parentId；无 rootQuestion 的节点仍生成一条 user 消息（用标题）。
+ */
+export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): Conv {
+  const conv = freshConv(workspace);
+  const idByTitle = new Map<string, string>();
+  nodes.forEach((n, i) => idByTitle.set(n.title, "q" + (i + 1)));
+
+  for (const n of nodes) {
+    const id = idByTitle.get(n.title)!;
+    const parentId = n.parentTitle ? idByTitle.get(n.parentTitle) ?? null : null;
+    const thread = addThread(conv, {
+      question: n.rootQuestion || n.title,
+      parentId,
+      anchor: n.anchor,
+    });
+    // 覆写 addThread 默认值（节点是权威源）
+    thread.id = id;
+    thread.title = n.title;
+    thread.rootQuestion = n.rootQuestion || n.title;
+    thread.summary = n.summary || "";
+    thread.status = n.status;
+    // 封顶标记持久化在节点 frontmatter → 重建时恢复
+    if (n.locked) thread.mastery = "mastered";
+    pushMessage(conv, "user", n.rootQuestion || n.title, { lineId: id });
+    const fullResponse = extractMentorResponse(n.content);
+    if (fullResponse) pushMessage(conv, "assistant", fullResponse, { lineId: id });
+    else if (n.summary) pushMessage(conv, "assistant", n.summary, { lineId: id });
+  }
+  conv.reading.activeId = conv.reading.threads[0]?.id ?? null;
+  return conv;
 }
 
 /** 回答收尾（Zotero finishAnswer）：更新线程理解沉淀 + 最近追问 */
@@ -318,43 +364,68 @@ export function branchContext(conv: Conv, id: string | null): string {
   }).join("\n\n");
 }
 
-/** 掌握深度标签（中文） */
+/** 封顶标签（mastery：节点存在即已到达；mastered 表示用户主动暂停深化此链） */
 export function masteryLabel(m?: "mastered" | "exploring" | "fresh"): string {
-  if (m === "mastered") return "已掌握";
+  if (m === "mastered") return "封顶";
   if (m === "exploring") return "进行中";
   return "刚接触";
 }
 
-/** 认知地图摘要（带掌握深度 + 当前锚点位置，供方向导引） */
+/**
+ * 认知地图摘要（结构化：缩进树 + 摘要 + 状态/封顶标记，供方向导引）。
+ * 节点是路标不是终点 —— 导引看到的是链的结构与深度，而非"已掌握需回避"的名单。
+ */
 export function cognitiveMapSummary(conv: Conv): {
-  mastered: string[];
-  exploring: string[];
-  fresh: string[];
+  locked: string[];
   active: string | null;
   activeAnchorPath: string | null;
   summaryText: string;
 } {
-  const mastered: string[] = [];
-  const exploring: string[] = [];
-  const fresh: string[] = [];
-  for (const t of conv.reading.threads) {
-    const label = t.title || t.rootQuestion;
-    if (t.mastery === "mastered") mastered.push(label);
-    else if (t.mastery === "exploring" || t.status === "active") exploring.push(label);
-    else fresh.push(label);
+  const threads = conv.reading.threads;
+  const byParent = new Map<string | null, ConvThread[]>();
+  for (const t of threads) {
+    const key = t.parentId ?? null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(t);
   }
+  const locked: string[] = [];
+  const lines: string[] = [];
+
+  const lineOf = (t: ConvThread): string => {
+    const marks: string[] = [];
+    if (t.mastery === "mastered") {
+      marks.push("🔒 封顶");
+      locked.push(t.title || t.rootQuestion || t.id);
+    } else if (t.status === "paused") {
+      marks.push("⏸️ 暂停");
+    }
+    const summary = t.summary ? `（摘要：${t.summary.replace(/\s+/g, " ").trim().slice(0, 80)}）` : "";
+    return `${t.title || t.rootQuestion || t.id}${marks.length ? ` [${marks.join(" ")}]` : ""}${summary}`;
+  };
+
+  const walk = (parentKey: string | null, depth: number) => {
+    const kids = byParent.get(parentKey) ?? [];
+    for (const kid of kids) {
+      lines.push(`${"  ".repeat(depth)}${depth === 0 ? "" : "└─ "}${lineOf(kid)}`);
+      walk(kid.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  // 兜底：无父关系的孤立线程
+  const placed = new Set<string>();
+  byParent.forEach((kids) => kids.forEach((k) => placed.add(k.id)));
+  for (const t of threads) {
+    if (!placed.has(t.id) && t.parentId) {
+      lines.push(`  └─ ${lineOf(t)}`);
+    }
+  }
+
   const active = activeThread(conv);
   return {
-    mastered,
-    exploring,
-    fresh,
+    locked: [...new Set(locked)],
     active: active ? (active.title || active.rootQuestion) : null,
     activeAnchorPath: active?.anchor?.sourcePath ?? null,
-    summaryText: [
-      mastered.length ? `已掌握：${mastered.join(" / ")}` : "",
-      exploring.length ? `进行中：${exploring.join(" / ")}` : "",
-      fresh.length ? `刚接触：${fresh.join(" / ")}` : "",
-    ].filter(Boolean).join("\n") || "（尚无认知节点，全新探索）",
+    summaryText: lines.length ? lines.join("\n") : "（尚无认知节点，全新探索）",
   };
 }
 

@@ -36,6 +36,26 @@ export interface TutorSettings {
   temperature: number;
   /** 当前激活的 provider id */
   activeProvider?: string;
+  /** 执行模式（Agent）通道 —— 独立于对话通道：对话走反代，执行走支持 tool_calls 的官方 API */
+  agentApiBase: string;
+  /** Agent API key 环境变量名（默认 DEEPSEEK_API_KEY） */
+  agentApiKeyEnv: string;
+  /** Agent API key（明文兜底，环境变量优先） */
+  agentApiKey: string;
+  /** Agent 模型 */
+  agentModel: string;
+  /** Agent 通道类型：opencode（本机 serve，完整 agent）/ openai（直连，自建工具循环） */
+  agentChannel: "opencode" | "openai";
+  /** opencode serve 地址 */
+  opencodeBase: string;
+  /** opencode provider id */
+  opencodeProvider: string;
+  /** opencode 模型 id */
+  opencodeModel: string;
+  /** 自建循环最大轮数（openai 通道用；opencode 通道不受限） */
+  agentMaxTurns: number;
+  /** 教材检索开关：打开时每次提问自动检索教材原文注入问答模型 */
+  textbookSearchEnabled: boolean;
 }
 
 /** 一个 API 提供商（OpenAI 兼容端点） */
@@ -98,6 +118,16 @@ export const DEFAULT_SETTINGS: TutorSettings = {
   maxTokens: 4096,
   temperature: 0.7,
   activeProvider: "deepseek",
+  agentApiBase: "https://api.deepseek.com/v1",
+  agentApiKeyEnv: "DEEPSEEK_API_KEY",
+  agentApiKey: "",
+  agentModel: "deepseek-chat",
+  agentChannel: "opencode",
+  opencodeBase: "http://127.0.0.1:10999",
+  opencodeProvider: "deepseek",
+  opencodeModel: "deepseek-v4-flash",
+  agentMaxTurns: 30,
+  textbookSearchEnabled: false,
 };
 
 /** 解析当前生效的 provider（找不到则退回 deepseek 预设） */
@@ -113,8 +143,9 @@ export interface ChatMessage {
   content: string;
 }
 
-/** 读取有效 API key：环境变量 > 设置里的旧值（兼容） */
+/** 读取有效 API key：设置里显式填的优先（如 chat2api 反代 JWT），环境变量兜底 */
 export function resolveApiKey(settings: TutorSettings): string {
+  if (settings.apiKey && settings.apiKey.trim()) return settings.apiKey;
   if (settings.apiKeyEnv) {
     try {
       const env = (globalThis as any)?.process?.env?.[settings.apiKeyEnv];
@@ -126,11 +157,39 @@ export function resolveApiKey(settings: TutorSettings): string {
   return settings.apiKey || "";
 }
 
+/** 读取执行模式（Agent）API key：环境变量 > 设置明文 */
+export function resolveAgentApiKey(settings: TutorSettings): string {
+  if (settings.agentApiKeyEnv) {
+    try {
+      const env = (globalThis as any)?.process?.env?.[settings.agentApiKeyEnv];
+      if (env) return env;
+    } catch (e) {
+      // 忽略环境变量访问失败
+    }
+  }
+  return settings.agentApiKey || "";
+}
+
+/** 执行模式（Agent）通道配置（独立于对话通道） */
+export function agentConfig(settings: TutorSettings): {
+  apiBase: string;
+  apiKey: string;
+  model: string;
+} {
+  return {
+    apiBase: settings.agentApiBase || "https://api.deepseek.com/v1",
+    apiKey: resolveAgentApiKey(settings),
+    model: settings.agentModel || "deepseek-chat",
+  };
+}
+
 /** 当前生效的端点（provider 优先，回落旧字段） */
 export function activeEndpoint(settings: TutorSettings): { apiBase: string; apiKey: string } {
   const p = resolveProvider(settings);
   const apiBase = p.apiBase || settings.apiBase || "https://api.deepseek.com/v1";
   const key =
+    // 用户显式填的 key 优先（如 chat2api 反代 JWT；环境变量可能存着旧 key 会盖掉它）
+    (settings.apiKey && settings.apiKey.trim() ? settings.apiKey : "") ||
     (p.apiKey && p.apiKey.trim() ? p.apiKey : "") ||
     (() => {
       try {
@@ -140,7 +199,6 @@ export function activeEndpoint(settings: TutorSettings): { apiBase: string; apiK
         return "";
       }
     })() ||
-    settings.apiKey ||
     "";
   return { apiBase, apiKey: key };
 }
@@ -154,7 +212,7 @@ export function buildSystemPrompt(): string {
     "1. 学生自由探索，你基于教材识别价值：珍贵（结构性/反直觉/能连接多讲）就推深；细节（技术计算/铺垫）就标记为可略过，但不贬低。",
     "2. 绝不拉回：不因章节边界、超纲、够用就好而阻止学生深入。学生想追根就陪他追。",
     "3. 停止权在学生：学生说停就停，不催促、不布置作业。",
-    "4. 回答要基于教材证据：引用教材原文/题号时标注来源；不确定的明确说教材里未确认。",
+    "4. 回答基于教材证据：教材检索结果（若有）会随问题提供，引用时标注【📖 文件:行】；未提供检索结果时直接基于已有知识回答，不需要声明'看不到教材'。",
     "5. 用为什么驱动：先给撞墙问题/直觉，再给理论，不先灌定义。",
     "6. 珍贵总是少数：教材里大部分是细节，帮学生识别哪些是珍贵少数。",
     "",
@@ -271,4 +329,41 @@ export async function streamCompletion(
     reader.releaseLock();
   }
   return full;
+}
+
+/* ===== @ 引用笔记（P1-3）纯函数 ===== */
+
+/**
+ * 光标处的 @token 检测：@ 前必须是行首/空白/括号等标点（防止邮箱、无空格的 @ 误触发）。
+ * 返回 { token: "@ 后的内容", start: "@" 的起始下标 }；不触发返回 null。
+ */
+export function atToken(value: string, cursor: number): { token: string; start: number } | null {
+  const before = value.slice(0, cursor);
+  const m = /(?:^|[\s（(【[，,。.！!？?；;])(@)([^\s@]*)$/.exec(before);
+  if (!m) return null;
+  return { token: m[2], start: m.index + m[0].indexOf("@") };
+}
+
+/** 提取消息文本中的 [[笔记名]] 双链（去 alias 与 #subpath） */
+export function extractNoteLinks(content: string): string[] {
+  const re = /\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]/g;
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const name = m[1].trim().split("#")[0].trim();
+    if (name) out.push(name);
+  }
+  return out;
+}
+
+/** 组装 @ 引用笔记的上下文 system 块（每篇取前 500 字） */
+export function buildNoteContextBlocks(notes: { path: string; content: string }[]): string {
+  if (notes.length === 0) return "";
+  return (
+    "【@ 引用笔记】（来自问题中 @ 引用的笔记）\n" +
+    notes
+      .map((n) => `<context file="${n.path}">\n${String(n.content).slice(0, 500)}\n</context>`)
+      .join("\n\n") +
+    "\n\n回答规则：引用这些笔记内容时标注笔记名；笔记未覆盖的部分基于已有知识回答，不要声明看不到笔记。"
+  );
 }

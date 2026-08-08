@@ -67,6 +67,47 @@
   border-radius: 8px;
   padding: 8px 10px;
   max-width: 95%;
+  position: relative;
+}
+
+/* 消息 hover 操作组（P0-2） */
+.edge-tutor-msg-acts {
+  position: absolute;
+  top: -14px;
+  right: 8px;
+  display: none;
+  gap: 2px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 2px 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.edge-tutor-msg:hover .edge-tutor-msg-acts {
+  display: flex;
+}
+
+.edge-tutor-msg-act {
+  padding: 1px 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text-normal);
+  font-family: inherit;
+}
+
+.edge-tutor-msg-act:hover {
+  background: var(--background-modifier-hover);
+}
+
+.edge-tutor-msg-act.danger:hover {
+  color: var(--text-error);
 }
 
 .edge-tutor-msg-content {
@@ -105,6 +146,36 @@
   font-family: inherit;
 }
 
+/* 代码块 hover 复制按钮（P2-5） */
+.edge-tutor-code-block {
+  position: relative;
+}
+
+.edge-tutor-code-copy {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: none;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+  opacity: 0.85;
+  z-index: 2;
+}
+
+.edge-tutor-code-block:hover .edge-tutor-code-copy {
+  display: block;
+}
+
+.edge-tutor-code-copy:hover {
+  opacity: 1;
+}
+
 .edge-tutor-entry {
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
@@ -124,6 +195,39 @@
   font-weight: normal;
 }
 
+.edge-tutor-cite-btn {
+  display: inline-block;
+  margin: 0 3px;
+  padding: 1px 8px;
+  font-size: 0.78em;
+  border-radius: 10px;
+  border: 1px solid var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  color: var(--interactive-accent);
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.edge-tutor-cite-btn:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.edge-tutor-entry-badge {
+  display: inline-block;
+  font-size: 0.75em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-right: 6px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.edge-tutor-entry-badge.deepen {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
 .edge-tutor-entry-row {
   margin: 2px 0;
   font-size: 0.85em;
@@ -140,6 +244,91 @@
 .edge-tutor-tools {
   display: flex;
   gap: 6px;
+}
+
+.edge-tutor-mode-switch {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.edge-tutor-mode-btn {
+  flex: 1;
+  padding: 6px;
+  font-size: 0.85em;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+}
+
+.edge-tutor-mode-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.edge-tutor-mode-btn.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.edge-tutor-agent-log {
+  font-family: var(--font-monospace);
+  font-size: 0.8em;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  border-left: 3px solid var(--interactive-accent);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.edge-tutor-agent-log-line {
+  line-height: 1.5;
+}
+
+.edge-tutor-agent-badge {
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--interactive-accent);
+  margin-bottom: 4px;
+}
+
+.edge-tutor-msg-agent {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+.edge-tutor-agent-task-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.edge-tutor-agent-task-input {
+  font-weight: 600;
+  margin: 4px 0 6px;
+  white-space: pre-wrap;
+}
+
+.edge-tutor-agent-task-error {
+  color: var(--text-error);
+  margin-top: 6px;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}
+
+.edge-tutor-search-toggle.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.edge-tutor-agent-open {
+  border: 1px solid var(--interactive-accent);
 }
 
 .edge-tutor-btn {
@@ -162,6 +351,73 @@
   align-items: flex-end;
 }
 
+/* 上下文 chips（P0-1A） */
+.edge-tutor-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px 2px;
+}
+
+.edge-tutor-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 10px;
+  background: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.edge-tutor-context-chip:hover {
+  background: var(--background-modifier-border);
+}
+
+.edge-tutor-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edge-tutor-chip-x {
+  font-weight: 700;
+  opacity: 0.7;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+
+.edge-tutor-chip-x:hover {
+  opacity: 1;
+  color: var(--text-error);
+}
+
+/* 回答「基于」回显（P0-1B） */
+.edge-tutor-msg-ctx {
+  padding: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.edge-tutor-msg-ctx-btn {
+  background: none;
+  border: none;
+  color: var(--text-accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+
+.edge-tutor-msg-ctx-btn:hover {
+  text-decoration: underline;
+}
+
 .edge-tutor-input {
   flex: 1;
   resize: vertical;
@@ -181,6 +437,23 @@
 .edge-tutor-send:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+/* 懒渲染「加载更早」按钮（P2-6） */
+.edge-tutor-load-more {
+  align-self: center;
+  margin: 6px 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.edge-tutor-load-more:hover {
+  background: var(--background-modifier-border);
 }
 
 /* ===== 思维导图（Zotero 形式） ===== */
@@ -575,6 +848,15 @@
   word-break: break-word;
   font-size: 0.9em;
   line-height: 1.5;
+}
+
+/* 流式段落增量渲染（P1-4）：已提交段落容器 */
+.edge-tutor-stream-committed {
+  white-space: normal;
+}
+
+.edge-tutor-stream-committed + .edge-tutor-stream-text {
+  margin-top: 4px;
 }
 
 /* 停车场行 */

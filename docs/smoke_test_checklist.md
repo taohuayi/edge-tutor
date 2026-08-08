@@ -3,6 +3,19 @@
 > 架构：内存会话为主（.conv.json 存 threads+messages+reading），节点 .md 为沉淀镜像。
 > 交互全面对齐 Zotero 原版。测试前置：API key 可用（环境变量 EDGE_TUTOR_API_KEY 或设置页）。
 
+## 自动测试（npm test）
+
+纯函数层（canvas/conv/export/guide/tutor）由 `node:test` 覆盖，改这些模块前先跑：
+
+```bash
+npm test        # 构建测试 bundle + 跑 33 个用例（零依赖）
+```
+
+- 测试文件：`test/*.test.mjs`（import `test/.build/*.cjs`，由 `scripts/build-tests.mjs` 生成）
+- 重点回归项：conv 迁移容错（v1-v4）、重建会话的工作区边界（不递归子工作区）、
+  导图环检测不死循环、备份 roundtrip、节点 frontmatter 解析
+- 新增纯函数逻辑时同步补测试；`npm test` 不通过禁止构建发布
+
 ## 环境准备
 
 - [ ] API key 已配置（环境变量或设置页），启动 Obsidian

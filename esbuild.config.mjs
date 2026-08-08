@@ -6,7 +6,7 @@ const prod = !process.argv.includes("--watch");
 const ctx = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
-  external: ["obsidian"],
+  external: ["obsidian", "child_process"],
   format: "cjs",
   target: "es2018",
   logLevel: "info",

@@ -20,6 +20,8 @@ export interface CognitiveNode {
   status: "active" | "paused";
   rootQuestion?: string;
   summary?: string;
+  /** 此链封顶（🔒）：导引不深化此链。持久化在节点 frontmatter，重建会话时恢复 */
+  locked?: boolean;
   /** 写入目标工作区（可空，默认当前工作区） */
   workspace?: string;
 }
@@ -47,6 +49,7 @@ export function buildNodeContent(node: CognitiveNode): string {
   if (node.anchor.sourcePath) lines.push('anchorPath: "' + node.anchor.sourcePath + '"');
   if (node.parentTitle) lines.push('parent: "[[' + node.parentTitle + ']]"');
   if (node.summary) lines.push('summary: "' + node.summary.replace(/"/g, "'").slice(0, 120) + '"');
+  if (node.locked) lines.push("locked: true");
   lines.push("---");
   lines.push("");
   lines.push("# " + node.title);
@@ -77,6 +80,13 @@ export function buildNodeContent(node: CognitiveNode): string {
   return lines.join("\n");
 }
 
+/** 提取导师回应区完整正文（不截断，供重建会话/复制分支使用）。在模板区（🔗/📖/🔍/---）前截断，正文内部的 Markdown 标题不影响。 */
+export function extractMentorResponse(content: string): string {
+  if (!content) return "";
+  const m = content.match(/## 💡 导师回应[^\n]*\n([\s\S]*?)(?=\n## 🔗 原理链|\n## 📖 教材锚点|\n## 🔍 追问|\n---|$)/);
+  return m?.[1]?.trim() ?? "";
+}
+
 /** 从节点文件内容解析元数据（容错） */
 export function parseNodeFromContent(title: string, content: string, sourcePath: string): CognitiveNode {
   const status = content.includes("status: paused") ? "paused" : "active";
@@ -84,16 +94,17 @@ export function parseNodeFromContent(title: string, content: string, sourcePath:
   const anchorMatch = content.match(/^anchor:\s*"([^"]*)"/m);
   const summaryMatch = content.match(/^summary:\s*"([^"]*)"/m);
   const anchorPathMatch = content.match(/^anchorPath:\s*"([^"]*)"/m);
+  const lockedMatch = content.match(/^locked:\s*true/m);
 
   // 追问区（## 🔍 追问 之后，到下一个 ## 之前）
   let rootQuestion: string | undefined;
   const qMatch = content.match(/## 🔍 追问\s*\n([\s\S]*?)\n## /);
   if (qMatch?.[1]) rootQuestion = qMatch[1].trim().slice(0, 300) || undefined;
 
-  // 导师回应区（## 💡 导师回应 之后）
+  // 导师回应区：优先完整提取（模板区前截断，正文内部标题不截断）
   let summary: string | undefined;
-  const sMatch = content.match(/## 💡 导师回应[^\n]*\n([\s\S]*?)(?=\n## |$)/);
-  if (sMatch?.[1]) summary = sMatch[1].trim().slice(0, 300) || undefined;
+  const full = extractMentorResponse(content);
+  if (full) summary = full.slice(0, 300);
 
   return {
     title,
@@ -106,6 +117,7 @@ export function parseNodeFromContent(title: string, content: string, sourcePath:
     status: status as "active" | "paused",
     rootQuestion,
     summary: summaryMatch?.[1] ?? summary,
+    locked: !!lockedMatch,
   };
 }
 
