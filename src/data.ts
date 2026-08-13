@@ -64,7 +64,9 @@ export async function listNodes(
     if (f.name.startsWith(".")) continue;
     if (f.name === "认知边缘地图.md") continue;
     const content = await app.vault.cachedRead(f);
-    nodes.push(parseNodeFromContent(f.basename, content, f.path));
+    const node = parseNodeFromContent(f.basename, content, f.path);
+    node.filePath = f.path;
+    nodes.push(node);
   }
   return nodes;
 }

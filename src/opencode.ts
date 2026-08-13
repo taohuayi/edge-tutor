@@ -77,10 +77,26 @@ export async function runOpenCodeTask(
   } finally {
     // 任务结束即清理会话，避免堆积
     try {
-      await fetch(`${base}/session/${sessionId}`, { method: "DELETE", signal: opts.signal });
+      await fetchWithTimeout(`${base}/session/${sessionId}`, { method: "DELETE", signal: opts.signal }, 3_000);
     } catch (e) {
       // 清理失败不影响结果
     }
+  }
+}
+
+/** fetch 带超时（AbortController + 定时器；透传外部 signal，任一方 abort 即中止） */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), timeoutMs);
+  const outer = init.signal;
+  if (outer) {
+    if (outer.aborted) c.abort();
+    else outer.addEventListener("abort", () => c.abort(), { once: true });
+  }
+  try {
+    return await fetch(url, { ...init, signal: c.signal });
+  } finally {
+    clearTimeout(t);
   }
 }
 
@@ -141,6 +157,13 @@ async function sendMessage(
     else outer.addEventListener("abort", () => controller.abort());
   }
   const maxWaitMs = opts.maxWaitMs ?? 15 * 60 * 1000; // 默认 15 分钟；检索类任务可调短
+  // 硬超时：定时器 abort 让挂起的 reader.read()/fetch 立即 reject。
+  // （此前只查 while 顶部 deadline，read() 挂起时永远到不了，超时形同虚设——9 分钟僵死的根因）
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, maxWaitMs);
   const evtResp = await fetch(`${base}/event`, { signal: controller.signal });
   if (!evtResp.ok || !evtResp.body) {
     throw new Error(`opencode 事件流失败 (${evtResp.status})`);
@@ -149,11 +172,9 @@ async function sendMessage(
   const decoder = new TextDecoder();
   let buffer = "";
   let idle = false;
-  const deadline = Date.now() + maxWaitMs;
 
   try {
     while (!idle) {
-      if (Date.now() > deadline) break;
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -195,7 +216,12 @@ async function sendMessage(
         }
       }
     }
+  } catch (e) {
+    // 超时 abort → 明确超时错误（带时长）；外部取消（用户/调用方 signal）原样抛
+    if (timedOut) throw new Error(`opencode 任务超时（${Math.round(maxWaitMs / 1000)}s）`);
+    throw e;
   } finally {
+    clearTimeout(timer);
     controller.abort();
     try {
       reader.releaseLock();
@@ -205,7 +231,7 @@ async function sendMessage(
   }
 
   // 拉全量消息（最终文本 + 兜底补漏步骤）
-  const listResp = await fetch(`${base}/session/${sessionId}/message`, { signal: opts.signal });
+  const listResp = await fetchWithTimeout(`${base}/session/${sessionId}/message`, { signal: opts.signal }, 10_000);
   if (!listResp.ok) {
     throw new Error(`opencode 读取结果失败 (${listResp.status})`);
   }

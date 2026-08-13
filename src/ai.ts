@@ -16,6 +16,8 @@ export interface TutorSettings {
   nodeFolder: string;
   /** 教材根目录（vault 内相对路径，用于定位锚点） */
   textbookRoot: string;
+  /** 当前激活工作区（持久化：面板重启恢复；切教材自动联动到同名教材工作区） */
+  activeWorkspace?: string;
   /** 未发送的输入草稿（含分支意图，对齐 Zotero composerDraft） */
   draft?: {
     text: string;
@@ -56,6 +58,22 @@ export interface TutorSettings {
   agentMaxTurns: number;
   /** 教材检索开关：打开时每次提问自动检索教材原文注入问答模型 */
   textbookSearchEnabled: boolean;
+  /** 向量 embedding 来源：local（本地 bge-small，默认）/ dashscope（阿里百炼 text-embedding-v4） */
+  embeddingProvider: "local" | "dashscope";
+  /** 远程 embedding API key（独立于对话 key；环境变量 EDGE_TUTOR_EMBEDDING_API_KEY 优先） */
+  embeddingApiKey: string;
+  /** 远程 embedding OpenAI 兼容 base URL（不含 /embeddings） */
+  embeddingApiBase: string;
+  /** 远程 embedding 模型 id */
+  embeddingModel: string;
+  /** 远程 embedding 输出维度 */
+  embeddingDim: number;
+  /** rerank 来源：local（本地 bge-reranker，默认）/ dashscope（阿里百炼 qwen3-rerank API） */
+  rerankProvider: "local" | "dashscope";
+  /** 远程 rerank OpenAI 兼容 base URL（不含 /reranks；阿里是 compatible-api 路径，与 embedding 的 compatible-mode 不同） */
+  rerankApiBase: string;
+  /** 远程 rerank 模型 id */
+  rerankModel: string;
 }
 
 /** 一个 API 提供商（OpenAI 兼容端点） */
@@ -74,28 +92,30 @@ export const PRESET_PROVIDERS: Provider[] = [
     id: "deepseek",
     name: "DeepSeek（官方）",
     apiBase: "https://api.deepseek.com/v1",
-    apiKey: "",
+    apiKey: "sk-35ffe2de30b04ad0b7d592365f9e903e",
     models: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"],
   },
   {
     id: "tokeness-claude",
     name: "Tokeness（Claude）",
     apiBase: "https://n.tokeness.io/v1",
-    apiKey: "",
-    models: ["claude-opus-4-8", "claude-sonnet-4-6"],
+    apiKey: "sk-rjPPBDyyz3IYvU82pwTcVe8Hv76oaW9wKsd4QwZeC4ScDq2O",
+    // 实测（2026-08-10）：此 key 挂在 Claude 组，仅这 4 个模型可用，其余返回 model_not_found
+    models: ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
   },
   {
     id: "tokeness-gpt",
     name: "Tokeness（GPT）",
     apiBase: "https://n.tokeness.io/v1",
-    apiKey: "",
+    apiKey: "sk-aR3eFlf91K3FZFw1vCNeLu5d0FMgC01cWbFYDzORRuBbaDKk",
+    // GPT 组 key（来源：Hermes config.yaml 的 providers.tokeness-gpt，2026-08-10 实测 6 模型全通）
     models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
   },
   {
     id: "zhuomatech",
     name: "Zhuomatech",
     apiBase: "https://api.zhuomatech.cn/v1",
-    apiKey: "",
+    apiKey: "sk-3b456d2bab4cd33652f83730d8316824b6f5beafcb9297d8e0604d078cd06497",
     models: ["codex-auto-review", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra"],
   },
   {
@@ -117,18 +137,38 @@ export const DEFAULT_SETTINGS: TutorSettings = {
   draft: null,
   maxTokens: 4096,
   temperature: 0.7,
-  activeProvider: "deepseek",
-  agentApiBase: "https://api.deepseek.com/v1",
-  agentApiKeyEnv: "DEEPSEEK_API_KEY",
+  activeProvider: "chat2api",
+  agentApiBase: "https://opencode.ai/zen/go/v1",
+  agentApiKeyEnv: "OPENCODE_GO_API_KEY",
   agentApiKey: "",
-  agentModel: "deepseek-chat",
+  agentModel: "deepseek-v4-flash",
   agentChannel: "opencode",
   opencodeBase: "http://127.0.0.1:10999",
-  opencodeProvider: "deepseek",
+  opencodeProvider: "opencode-go",
   opencodeModel: "deepseek-v4-flash",
   agentMaxTurns: 30,
   textbookSearchEnabled: false,
+  embeddingProvider: "local",
+  embeddingApiKey: "",
+  embeddingApiBase: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  embeddingModel: "text-embedding-v4",
+  embeddingDim: 1024,
+  rerankProvider: "local",
+  rerankApiBase: "https://dashscope.aliyuncs.com/compatible-api/v1",
+  rerankModel: "qwen3-rerank",
 };
+
+/** 读取远程 embedding API key：环境变量 > 设置明文（与 resolveApiKey 同模式） */
+export function resolveEmbeddingApiKey(settings: TutorSettings): string {
+  if (settings.embeddingApiKey && settings.embeddingApiKey.trim()) return settings.embeddingApiKey;
+  try {
+    const env = (globalThis as any)?.process?.env?.["EDGE_TUTOR_EMBEDDING_API_KEY"];
+    if (env) return env;
+  } catch (e) {
+    // 忽略环境变量访问失败
+  }
+  return settings.embeddingApiKey || "";
+}
 
 /** 解析当前生效的 provider（找不到则退回 deepseek 预设） */
 export function resolveProvider(settings: TutorSettings): Provider {
@@ -177,9 +217,9 @@ export function agentConfig(settings: TutorSettings): {
   model: string;
 } {
   return {
-    apiBase: settings.agentApiBase || "https://api.deepseek.com/v1",
+    apiBase: settings.agentApiBase || "https://opencode.ai/zen/go/v1",
     apiKey: resolveAgentApiKey(settings),
-    model: settings.agentModel || "deepseek-chat",
+    model: settings.agentModel || "deepseek-v4-flash",
   };
 }
 
@@ -232,6 +272,7 @@ export function buildSystemPrompt(): string {
 export async function chatCompletion(
   settings: TutorSettings,
   messages: ChatMessage[],
+  opts: { signal?: AbortSignal; maxTokens?: number } = {},
 ): Promise<string> {
   const { apiBase, apiKey } = activeEndpoint(settings);
   if (!apiKey) {
@@ -247,8 +288,9 @@ export async function chatCompletion(
       model: settings.model,
       messages,
       temperature: settings.temperature ?? 0.8,
-      max_tokens: settings.maxTokens ?? 4096,
+      max_tokens: opts.maxTokens ?? settings.maxTokens ?? 4096,
     }),
+    signal: opts.signal,
   });
   if (!resp.ok) {
     const errText = await resp.text();

@@ -32,13 +32,96 @@
   align-items: center;
 }
 
-.edge-tutor-ws-select {
+.edge-tutor-ws-trigger {
   flex: 1;
   font-size: 0.85em;
-  padding: 3px 6px;
+  padding: 3px 8px;
   border-radius: 6px;
   border: 1px solid var(--background-modifier-border);
   background: var(--background-primary);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edge-tutor-ws-trigger:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* 工作区树形弹层（挂 body，fixed 定位） */
+.edge-tutor-ws-pop {
+  position: fixed;
+  z-index: 1000;
+  max-width: 340px;
+  max-height: 55vh;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  font-size: 0.85em;
+}
+
+.edge-tutor-ws-pop-header {
+  padding: 4px 8px 6px;
+  font-weight: 600;
+  opacity: 0.6;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+}
+
+.edge-tutor-ws-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.edge-tutor-ws-tree-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.edge-tutor-ws-tree-row.is-current {
+  background: var(--background-modifier-active-hover, var(--background-modifier-hover));
+  font-weight: 600;
+}
+
+.edge-tutor-ws-tree-toggle {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  opacity: 0.6;
+}
+
+.edge-tutor-ws-tree-name {
+  flex: 1;
+}
+
+.edge-tutor-ws-tree-go {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0.5;
+}
+
+.edge-tutor-ws-tree-go:hover {
+  opacity: 1;
+  background: var(--background-modifier-hover);
+}
+
+.edge-tutor-ws-tree-empty {
+  padding: 8px;
+  opacity: 0.6;
 }
 
 .edge-tutor-ws-btn {
@@ -532,6 +615,14 @@
 .edge-tutor-map-node:hover {
   background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
+}
+
+/* 标题 = 问题原文（最长 50 字）：卡片内单行省略，防溢出 */
+.edge-tutor-map-node-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 只读节点（概念活页）标记 */

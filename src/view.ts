@@ -13,7 +13,7 @@
  *   - 导图节点拖拽重组（拖到节点=变子，拖空白=回主干）、活跃路径高亮、自动定位
  *   - 状态栏：操作反馈 / 草稿恢复提示
  */
-import { App, ItemView, MarkdownRenderer, MarkdownView, Modal, Notice, TFile, WorkspaceLeaf } from "obsidian";
+import { App, ItemView, MarkdownRenderer, MarkdownView, Modal, Notice, TFile, TFolder, WorkspaceLeaf } from "obsidian";
 import { TutorSettings, ChatMessage, buildSystemPrompt, streamCompletion, buildNoteContextBlocks, extractNoteLinks } from "./ai";
 import { buildGuideSystemPrompt, parseGuideResponse, GuideEntry, GuideMode, CognitiveMapSummary } from "./guide";
 import { SearchHit } from "./search";
@@ -24,7 +24,7 @@ import {
   Conv, ConvMessage, ConvThread, freshConv, pushMessage, addThread, ancestry, activeThread,
   collectSubtree, reparentThread, switchThread, pauseActive, removeThread, removeMessage,
   messagesForView, messageLineId, searchConversation, branchInstruction, finishAnswer,
-  cognitiveMapSummary, serializeConv,
+  cognitiveMapSummary, serializeConv, resolveParentTitle,
 } from "./conv";
 
 export const VIEW_TYPE_TUTOR = "edge-tutor-view";
@@ -35,7 +35,7 @@ export interface TutorPlugin {
   saveSettings: () => Promise<void>;
   readToc: () => Promise<string>;
   buildMapSummary: () => Promise<CognitiveMapSummary>;
-  createNode: (n: CognitiveNodeLike) => Promise<TFile>;
+  createNode: (n: CognitiveNodeLike, opts?: { updatePath?: string }) => Promise<TFile>;
   updateMoc: (workspace?: string) => Promise<void>;
   currentWorkspace: () => string;
   workspaceFolder: (workspace: string) => string;
@@ -44,8 +44,11 @@ export interface TutorPlugin {
   loadConv: (workspace: string) => Promise<Conv>;
   saveConv: (conv: Conv) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
-  renameWorkspace: (oldName: string, newName: string) => Promise<void>;
+  renameWorkspace: (oldName: string, newName: string) => Promise<string | null>;
   discoverWorkspaces: () => Promise<string[]>;
+  workspaceFolderExists: (workspace: string) => Promise<boolean>;
+  workspaceNameForTextbook: (root: string) => string | null;
+  ensureWorkspaceForTextbook: () => Promise<string | null>;
   exportWorkspace: (format: "markdown" | "json") => Promise<void>;
   rebuildConvFromNodes: (workspace?: string) => Promise<Conv | null>;
   deleteThreadsWithFiles: (workspace: string, threadIds: string[]) => Promise<number>;
@@ -54,6 +57,13 @@ export interface TutorPlugin {
   semanticTextbookSearch: (query: string) => Promise<SearchHit>;
   activateAgentView: () => Promise<void>;
   ensureOpenCodeServer: () => Promise<{ ok: boolean; message: string }>;
+}
+
+/** 工作区树节点（id=可激活的工作区；children=子工作区） */
+interface WsNode {
+  name: string;
+  id?: string;
+  children: WsNode[];
 }
 
 /** 兼容节点形状（view 传给 createNode 的最小结构） */
@@ -65,6 +75,8 @@ export interface CognitiveNodeLike {
   status: "active" | "paused";
   rootQuestion?: string;
   summary?: string;
+  /** 完整回答正文（导师回应区写入源） */
+  response?: string;
   workspace?: string;
 }
 
@@ -81,7 +93,19 @@ export class TutorView extends ItemView {
   private currentBox!: HTMLElement;
   private statusBar!: HTMLElement;
   private parkContainer!: HTMLElement;
-  private wsSelect!: HTMLSelectElement;
+  private wsTrigger!: HTMLButtonElement; // 工作区切换按钮（树形弹层入口）
+  private wsPop!: HTMLElement;           // 工作区树形弹层（挂 body，fixed 定位，避免面板裁剪）
+  private wsPopOpen = false;
+  /** 弹层外部点击/Esc 关闭（挂 document，onClose 移除） */
+  private wsDocClickBound = (e: MouseEvent) => {
+    if (!this.wsPop || !this.wsPopOpen) return;
+    const t = e.target as Node;
+    if (this.wsTrigger.contains(t) || this.wsPop.contains(t)) return;
+    this.closeWsPopover();
+  };
+  private wsDocKeydownBound = (e: KeyboardEvent) => {
+    if (e.key === "Escape") this.closeWsPopover();
+  };
   private viewSelect!: HTMLSelectElement;
   currentWorkspace = "main";
   private viewMode: ViewMode = "path";
@@ -140,43 +164,42 @@ export class TutorView extends ItemView {
 
     const header = container.createEl("div", { cls: "edge-tutor-header" });
     header.createEl("div", { text: "🧭 认知边缘导师", cls: "edge-tutor-title" });
+
+    // 激活工作区恢复（设置页切教材联动/面板切换时持久化；不在列表时由
+    // refreshWorkspaceSelect 兜底切到第一个可用工作区）
+    if (this.plugin.settings.activeWorkspace) this.currentWorkspace = this.plugin.settings.activeWorkspace;
+    // 教材-工作区绑定（新教材自动配工作区）：当前教材在注册表有对应工作区名，
+    // 但激活工作区不在该教材容器下 → 建容器并切过去（教材先切/面板后开也成立）
+    const textbookWs = this.plugin.workspaceNameForTextbook(this.plugin.settings.textbookRoot);
+    if (textbookWs) {
+      const isUnder = this.currentWorkspace === textbookWs || this.currentWorkspace.startsWith(textbookWs + "/");
+      if (!isUnder) {
+        await this.plugin.ensureWorkspaceForTextbook();
+        this.currentWorkspace = textbookWs;
+        this.plugin.settings.activeWorkspace = textbookWs;
+        await this.plugin.saveSettings();
+      }
+    }
     header.createEl("div", {
       text: "选中教材文本 → 由此追问。珍贵推深，细节标记，绝不拉回。停止权在你。",
       cls: "edge-tutor-subtitle",
     });
 
     const wsRow = header.createEl("div", { cls: "edge-tutor-ws-row" });
-    this.wsSelect = wsRow.createEl("select", { cls: "edge-tutor-ws-select" });
+    this.wsTrigger = wsRow.createEl("button", { cls: "edge-tutor-ws-trigger" });
     const wsNewBtn = wsRow.createEl("button", { text: "＋", cls: "edge-tutor-ws-btn", attr: { title: "新建工作区" } });
     const wsRenameBtn = wsRow.createEl("button", { text: "✎", cls: "edge-tutor-ws-btn", attr: { title: "重命名当前工作区" } });
-    await this.refreshWorkspaceSelect();
-
-    this.wsSelect.addEventListener("change", async () => {
-      const target = this.wsSelect.value;
-      if (target === this.currentWorkspace) return;
-      if (this.busy) {
-        new Notice("回答生成中，暂不能切换工作区");
-        await this.refreshWorkspaceSelect();
-        return;
-      }
-      try {
-        await this.plugin.saveConv(this.conv);
-        this.currentWorkspace = target;
-        this.conv = await this.ensureWorkspaceLoaded(target);
-        this.lastRenderedMapId = null;
-        // 清搜索状态
-        this.searchQuery = "";
-        this.searchHits = [];
-        this.searchCursor = -1;
-        if (this.searchEl) this.searchEl.value = "";
-        await this.renderAll();
-        await this.restoreDraft();
-        this.setStatus("已切换到工作区：" + (target === "main" ? "默认" : target));
-      } catch (e) {
-        new Notice("切换工作区失败：" + (e as Error).message.slice(0, 80));
-        await this.refreshWorkspaceSelect();
-      }
+    // 树形弹层：挂 body 用 fixed 定位（面板内部滚动/裁剪不影响），点击外部或 Esc 关闭
+    this.wsPop = createDiv({ cls: "edge-tutor-ws-pop" });
+    this.wsPop.hidden = true;
+    document.body.appendChild(this.wsPop);
+    document.addEventListener("click", this.wsDocClickBound);
+    document.addEventListener("keydown", this.wsDocKeydownBound);
+    this.wsTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleWsPopover();
     });
+    await this.refreshWorkspaceSelect();
 
     wsNewBtn.addEventListener("click", async () => {
       const name = await new PromptModal(this.app, "新建思维链工作区", "主题名，如：中值定理").openPrompt();
@@ -188,6 +211,12 @@ export class TutorView extends ItemView {
       }
       await this.plugin.createWorkspace(clean);
       await this.refreshWorkspaceSelect();
+      // 新建后立即激活（原行为需手动下拉切换）+ 持久化
+      await this.activateWorkspace(clean);
+      if (this.currentWorkspace === clean) {
+        this.plugin.settings.activeWorkspace = clean;
+        await this.plugin.saveSettings();
+      }
       new Notice("已创建新工作区：" + clean);
     });
 
@@ -204,12 +233,16 @@ export class TutorView extends ItemView {
         new Notice("工作区名称不能为空");
         return;
       }
-      await this.plugin.renameWorkspace(cur, clean);
-      this.currentWorkspace = clean;
-      this.conv.workspace = clean;
+      const finalId = await this.plugin.renameWorkspace(cur, clean);
+      if (!finalId) return; // 失败/同名 → 保持现状
+      this.currentWorkspace = finalId;
+      this.conv.workspace = finalId;
       await this.plugin.saveConv(this.conv);
+      // 重命名的是激活工作区 → 同步持久化激活状态
+      if (this.plugin.settings.activeWorkspace === cur) this.plugin.settings.activeWorkspace = finalId;
+      await this.plugin.saveSettings();
       await this.refreshWorkspaceSelect();
-      new Notice("已重命名为：" + clean);
+      new Notice("已重命名为：" + finalId);
     });
 
     // ===== 视图模式行 =====
@@ -430,6 +463,10 @@ export class TutorView extends ItemView {
       this.app.vault.offref(this.modifyRef);
       this.modifyRef = null;
     }
+    // 释放工作区树弹层
+    document.removeEventListener("click", this.wsDocClickBound);
+    document.removeEventListener("keydown", this.wsDocKeydownBound);
+    if (this.wsPop) this.wsPop.remove();
     this.contentEl.empty();
   }
 
@@ -632,8 +669,37 @@ export class TutorView extends ItemView {
    * 改为打开文件后搜索引用文本，滚动定位 + 临时高亮。
    * 支持行号优先定位（教材检索引用【📖 文件:行】）。
    */
+  /**
+   * 解析引用中的文件路径到 vault 相对路径。
+   * 回答里 LLM 常把完整路径简写成文件名（如【📖 第1讲.md:698】），逐级兜底：
+   * ① 原样（完整 vault 路径）② 教材根拼接 ③ basename 在教材目录内匹配 ④ 全局唯一匹配。
+   */
+  private resolveRefPath(file: string): string | null {
+    if (!file) return null;
+    const root = this.plugin.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    for (const p of [file, root + "/" + file]) {
+      if (this.app.vault.getAbstractFileByPath(p) instanceof TFile) return p;
+    }
+    const name = file.split("/").pop() ?? file;
+    const md = this.app.vault.getMarkdownFiles();
+    const inRoot = md.filter((f) => f.path.startsWith(root + "/") && f.name === name);
+    if (inRoot.length === 1) return inRoot[0].path;
+    const all = md.filter((f) => f.name === name);
+    if (all.length === 1) return all[0].path;
+    return null;
+  }
+
   private async navigateToTextAnchor(sourcePath: string, quote?: string, line?: number) {
-    const f = this.app.vault.getAbstractFileByPath(sourcePath);
+    let resolved = sourcePath;
+    if (!(this.app.vault.getAbstractFileByPath(sourcePath) instanceof TFile)) {
+      const r = this.resolveRefPath(sourcePath);
+      if (!r) {
+        new Notice("锚点文件不存在：" + sourcePath);
+        return;
+      }
+      resolved = r;
+    }
+    const f = this.app.vault.getAbstractFileByPath(resolved);
     if (!(f instanceof TFile)) {
       new Notice("锚点文件不存在：" + sourcePath);
       return;
@@ -780,15 +846,33 @@ export class TutorView extends ItemView {
     });
   }
 
-  /** 发送输入框内容（对齐 Zotero：branchNext / branchOrigin 决定行为） */
+  /**
+   * 发送输入框内容（每问一个问题 = 一个新线程 = 一个新结点）：
+   * 所有提问一律 addThread（挂当前活跃线程下形成链式子分支），不再"继续当前线程"合并。
+   * 保留：方向导引挂根（parentId = null，导引只是探索起点，避免污染链结构）。
+   */
   private async sendFromInput() {
     const text = this.inputEl.value.trim();
     if (!text || this.busy) return;
     this.inputEl.value = "";
     await this.clearDraft();
 
+    // 结点视角父链：当前编辑器打开的文件若是某线程的沉淀结点（nodeFile 匹配），
+    // 新问题挂到该线程下——「在结点里提问」接续该结点的讨论，而不是面板上次高亮的线程。
+    // 面板获得焦点时 getActiveFile() 为空，退回最近活跃的 markdown leaf（同 getCurrentReadingAnchor）。
+    const activeFile = this.app.workspace.getActiveFile();
+    const markdownLeaves = this.app.workspace
+      .getLeavesOfType("markdown")
+      .map((leaf) => leaf.view)
+      .filter((v): v is MarkdownView => v instanceof MarkdownView && !!v.file);
+    const editorView =
+      (activeFile && markdownLeaves.find((c) => c.file?.path === activeFile.path)) ?? markdownLeaves[0];
+    const fileThread = editorView?.file
+      ? this.conv.reading.threads.find((t) => !!t.nodeFile && t.nodeFile === editorView.file!.path) ?? null
+      : null;
     const active = activeThread(this.conv);
-    let lineId: string | undefined;
+    // 显式搁置（activeId=null，回主干）时尊重主干语义，不自动挂到打开的结点下
+    const parentThread = active ? (fileThread ?? active) : null;
     // 由此追问来源（选中原文）优先于分支按钮的 branchOrigin
     const isFromSelection = this.pendingAnchor !== null;
     const origin = this.branchOrigin || "";
@@ -796,43 +880,26 @@ export class TutorView extends ItemView {
     const guide = this.pendingGuide;
     this.pendingAnchor = null;
     this.pendingGuide = null;
+    this.branchNext = false;
+    this.branchOrigin = "";
     this.updateChips();
 
-    if (guide) {
-      // 方向导引只是探索起点，选中后创建独立根线程，避免把推荐误变成课程路线。
-      const t = addThread(this.conv, {
-        question: text.slice(0, 60),
-        parentId: null,
-        // 导引的教材锚点是说明文本，只有当前编辑器锚点才是可导航的 vault 路径。
-        anchor: this.plugin.getAnchor(),
-        originExcerpt: guide.whyWorthExploring.slice(0, 200),
-      });
-      lineId = t.id;
-    } else if (this.branchNext) {
-      // 明确点「从这里分叉」：新建分支，挂在当前线程下（继承断点）
-      const t = addThread(this.conv, {
-        question: text.slice(0, 60),
-        parentId: active?.id ?? null,
-        anchor: this.plugin.getAnchor(),
-        originExcerpt: isFromSelection ? origin.slice(0, 200) : undefined,
-      });
-      lineId = t.id;
-      this.branchNext = false;
-      this.branchOrigin = "";
-    } else if (isFromSelection && origin) {
-      // 由选中原文引出：新建线程，锚定到原文
-      const t = addThread(this.conv, {
-        question: text.slice(0, 60),
-        parentId: null,
-        anchor: { sourcePath: originAnchor ?? "", quote: origin.slice(0, 80) },
-        originExcerpt: origin.slice(0, 200),
-      });
-      lineId = t.id;
-      this.branchOrigin = "";
-    } else if (active) {
-      // 继续当前线程
-      lineId = active.id;
-    }
+    const t = addThread(this.conv, {
+      question: text,
+      parentId: guide ? null : (parentThread?.id ?? null),
+      // 导引的教材锚点是说明文本，只有当前编辑器锚点才是可导航的 vault 路径。
+      anchor: guide
+        ? this.plugin.getAnchor()
+        : isFromSelection
+          ? { sourcePath: originAnchor ?? "", quote: origin.slice(0, 80) }
+          : null,
+      originExcerpt: guide
+        ? guide.whyWorthExploring.slice(0, 200)
+        : isFromSelection
+          ? origin.slice(0, 200)
+          : undefined,
+    });
+    const lineId = t.id;
 
     // 消息内容：仅「由此追问」把原文附在问题前（AI 看到完整上下文）
     const content = isFromSelection && origin ? `【由这段原文引出】\n> ${origin}\n\n问题：${text}` : text;
@@ -876,19 +943,24 @@ export class TutorView extends ItemView {
     // 教材检索（开关开启时）：检索结果注入 system 上下文，不进 conv.messages、不显示
     let searchNote = "";
     if (lastUser && this.plugin.settings.textbookSearchEnabled) {
-      this.setStatus("🔍 正在教材检索（语义定位教材原文，约 15-45 秒）…");
+      this.setStatus("🔍 正在教材检索（本地索引定位教材原文）…");
       const hit = await this.plugin.semanticTextbookSearch(lastUser.content);
       if (hit.found) {
+        // 覆盖范围说明：让 LLM 知道检索覆盖全书（消除"只有这几条片段"的自我设限）；
+        // 引用示例用完整 vault 相对路径（LLM 学样简写文件名曾导致跳转失败）
+        const stats = this.plugin.textbookIndexStats;
+        const cover = stats ? `（${stats.files} 个文件、${stats.chunks} 块）` : "";
         history.unshift({
           role: "system",
           content: [
-            "【教材检索结果】（由检索代理从教材原文定位，行号可跳转核对）",
+            `【教材检索结果】已从教材${cover}检索到以下 ${hit.count} 处最相关原文（按相关度排序，行号可跳转核对）：`,
             hit.text,
             "",
             "回答规则：",
-            "1. 基于引用的教材原文回答，引用处标注【📖 文件:行】（如【📖 第6讲.md:364】）。",
-            "2. 引用覆盖不到的部分，明确说「教材中未直接对应，以下是基于已有知识的推断」。",
+            "1. 引用教材内容时标注【📖 完整路径:行】，路径必须是 vault 相对路径（如【📖 learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md:364】），禁止简写成文件名。",
+            "2. 引用未覆盖的部分基于已有知识回答即可，不需要声明「教材未直接对应」。",
             "3. 不编造原文——引用的文字必须来自上面的教材引用。",
+            "4. 当学生要求「多点实例/类似题目/类似的出题思想」时，从上面的引用中至少挑出 3 个以上不同讲次的实例，每个实例都附引用。",
           ].join("\n"),
         });
         searchNote = `（已检索 ${hit.count} 处教材原文）`;
@@ -901,10 +973,17 @@ export class TutorView extends ItemView {
         });
       }
     }
-    const isFollowup = !!lastUser && !!lastUser.lineId && lastUser.lineId === this.conv.reading.activeId;
+    // 每问一律新线程：lastUser.lineId === activeId 恒真，不能再拿它判 follow-up；
+    // 链式追问（本问题线程有父线程）才算继续分支，新根问题不是。
+    const lastUserThread = lastUser?.lineId
+      ? this.conv.reading.threads.find((t) => t.id === lastUser.lineId)
+      : null;
+    const isFollowup = !!lastUserThread?.parentId;
     const branchInstr = branchInstruction(this.conv, isFollowup);
-    for (let i = 0; i < this.conv.messages.length; i++) {
-      const m = this.conv.messages[i];
+    // 上下文按分支过滤：只送新线程祖先链的消息（messagesForView "path" 口径），
+    // 其他分支的讨论不进 prompt（此前全量历史导致回答接续无关结点的讨论）。
+    const branchMessages = messagesForView(this.conv, "path");
+    for (const m of branchMessages) {
       if (m.role === "user") {
         const anchorPrefix = m.anchor ? `【教材锚点：${m.anchor}】\n` : "";
         // 只给当前这条用户消息注入分支语境（对齐 Zotero buildBackendPrompt）
@@ -1041,6 +1120,15 @@ export class TutorView extends ItemView {
       await this.plugin.saveConv(this.conv);
       // 回答收尾（Zotero finishAnswer）：更新理解沉淀 + 最近追问
       if (lastUser) finishAnswer(this.conv, assistantMsg, lastUser.content);
+      // 自动沉淀：每问一结点（完整回答入正文；失败不打断对话，💾 可兜底）
+      if (lastUser?.lineId) {
+        try {
+          await this.sedimentThread(lastUser.lineId, assistantMsg);
+        } catch (e) {
+          console.warn("[edge-tutor] 自动沉淀失败", e);
+          this.setStatus("⚠️ 回答完成，但沉淀失败，可点 💾 重试");
+        }
+      }
       streamingEl.remove();
       this.renderAll();
     } catch (e) {
@@ -1111,10 +1199,15 @@ export class TutorView extends ItemView {
 
     // 历史：从开头到该 user 消息（含），分支语境注入
     const history: ChatMessage[] = [{ role: "system", content: buildSystemPrompt() }];
-    const isFollowup = !!userMsg.lineId && userMsg.lineId === this.conv.reading.activeId;
-    const branchInstr = branchInstruction(this.conv, isFollowup);
+    // 同 respond：按线程 parentId 判 follow-up（一律新线程后 lineId === activeId 恒真）
+    const userThread = userMsg.lineId ? this.conv.reading.threads.find((t) => t.id === userMsg.lineId) : null;
+    const isFollowup = !!userThread?.parentId;
+    const branchInstr = branchInstruction(this.conv, isFollowup, userThread?.id ?? null);
+    // 同 respond：只送该线程祖先链的消息，其他分支讨论不进 prompt（无线程归属的旧消息保持原样全送）
+    const branchIds = userThread ? new Set(ancestry(this.conv, userThread.id).map((t) => t.id)) : null;
     for (let i = 0; i <= uIdx; i++) {
       const m = this.conv.messages[i];
+      if (branchIds && !(m.lineId && branchIds.has(m.lineId))) continue;
       if (m.role === "user") {
         const instr = i === uIdx && branchInstr ? `\n\n${branchInstr}` : "";
         history.push({ role: "user", content: m.content + instr });
@@ -1145,6 +1238,14 @@ export class TutorView extends ItemView {
       delete target.verbatimContent;
       if (userMsg.anchor) target.anchor = userMsg.anchor;
       finishAnswer(this.conv, target, userMsg.content);
+      // 重新生成 → 同线程节点原位更新（nodeFile 幂等），不产生 -2 文件
+      if (userMsg.lineId) {
+        try {
+          await this.sedimentThread(userMsg.lineId, target);
+        } catch (e) {
+          console.warn("[edge-tutor] 重新生成后沉淀失败", e);
+        }
+      }
       await this.plugin.saveConv(this.conv);
       this.renderAll();
       this.setStatus("🔄 已重新生成");
@@ -1273,36 +1374,66 @@ export class TutorView extends ItemView {
     }
   }
 
-  /** 沉淀当前对话为认知节点（从会话同步到 .md 镜像） */
-  private async saveConversation() {
-    const active = activeThread(this.conv);
-    const lastUser = [...this.conv.messages].reverse().find((m) => m.role === "user");
-    const lastAssistant = [...this.conv.messages].reverse().find((m) => m.role === "assistant");
-    if (!lastUser) {
-      new Notice("还没有对话可沉淀");
-      return;
+  /**
+   * 沉淀一个线程为认知节点（每问一结点）。
+   * - 幂等键 = 线程 nodeFile（持久化在 .conv.json）：已沉淀 → 原位更新；未沉淀 → 新建（同名自动 -2/-3）
+   * - parentTitle 由 resolveParentTitle 解析（父线程已沉淀文件 → 线程标题 → 规范清洗标题）
+   * - 内部指令消息（🧭 开头的方向指引）跳过
+   */
+  private async sedimentThread(lineId: string | undefined, answerMsg?: ConvMessage | null) {
+    if (!lineId) return;
+    const t = this.conv.reading.threads.find((x) => x.id === lineId);
+    if (!t) return;
+    const question = t.rootQuestion || t.title || "";
+    if (!question || question.startsWith("🧭")) return;
+
+    // 回答取参数；未提供时（💾 兜底/回答失败）回落到线程内最后一条非 agent、非 🧭 的 assistant 消息
+    let answer = answerMsg?.content ?? "";
+    if (!answerMsg) {
+      const lastAssistant = [...this.conv.messages].reverse().find(
+        (m) => m.role === "assistant" && !m.agent && !m.content.startsWith("🧭") && m.lineId === t.id
+      );
+      answer = lastAssistant?.content ?? "";
     }
-    const title = makeNodeTitle(lastUser.content) || "认知节点";
+
+    // 当前工作区已有节点文件标题集合（供 resolveParentTitle 命中真实存在的父文件）
+    const existingTitles = new Set<string>();
+    const dir = this.app.vault.getAbstractFileByPath(this.plugin.workspaceFolder(this.currentWorkspace));
+    if (dir instanceof TFolder) {
+      for (const child of dir.children) {
+        if (!(child instanceof TFile) || !child.name.endsWith(".md")) continue;
+        if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
+        existingTitles.add(child.basename);
+      }
+    }
+
+    const parentThread = t.parentId ? this.conv.reading.threads.find((x) => x.id === t.parentId) : null;
     const node: CognitiveNodeLike = {
-      title,
-      content: buildNodeContent({
-        title,
-        content: "",
-        parentTitle: active?.parentId
-          ? (this.conv.reading.threads.find((t) => t.id === active!.parentId)?.title ?? undefined)
-          : undefined,
-        anchor: { sourcePath: lastUser.anchor ?? "", quote: lastUser.content.slice(0, 80) },
-        status: active?.status === "paused" ? "paused" : "active",
-        rootQuestion: lastUser.content,
-        summary: lastAssistant?.content.slice(0, 200),
-      }),
-      anchor: { sourcePath: lastUser.anchor ?? "", quote: lastUser.content.slice(0, 80) },
-      status: active?.status === "paused" ? "paused" : "active",
-      rootQuestion: lastUser.content,
-      summary: lastAssistant?.content.slice(0, 200),
+      title: makeNodeTitle(question),
+      content: "",
+      parentTitle: resolveParentTitle(parentThread ?? undefined, existingTitles),
+      anchor: { sourcePath: t.anchor?.sourcePath ?? "", quote: t.anchor?.quote ?? question.slice(0, 80) },
+      status: t.status,
+      rootQuestion: question,
+      summary: t.summary,
+      response: answer,
       workspace: this.currentWorkspace,
     };
-    await this.plugin.createNode(node);
+    const f = await this.plugin.createNode(node, { updatePath: t.nodeFile });
+    const isNew = t.nodeFile !== f.path;
+    t.nodeFile = f.path;
+    await this.plugin.saveConv(this.conv);
+    if (isNew) this.setStatus(`已自动沉淀：「${f.basename}」`);
+  }
+
+  /** 手动沉淀当前活跃线程（自动沉淀失败时的 💾 兜底） */
+  private async saveConversation() {
+    const active = activeThread(this.conv);
+    if (!active) {
+      new Notice("没有活跃线程可沉淀");
+      return;
+    }
+    await this.sedimentThread(active.id);
     new Notice("✅ 认知节点已沉淀");
   }
 
@@ -1332,11 +1463,14 @@ export class TutorView extends ItemView {
     const lastMsg = this.conv.messages[this.conv.messages.length - 1];
     if (!lastMsg) return false;
     const folder = this.plugin.workspaceFolder(this.currentWorkspace).replace(/\/+$/, "");
-    const files = this.app.vault.getMarkdownFiles();
+    // 只比较工作区直接子节点：子工作区（嵌套目录）的文件、MOC、隐藏文件不参与判定
+    const dir = this.app.vault.getAbstractFileByPath(folder);
     let latest = 0;
-    for (const f of files) {
-      if (f.path === folder || f.path.startsWith(folder + "/")) {
-        const mtime = f.stat?.mtime ?? 0;
+    if (dir instanceof TFolder) {
+      for (const child of dir.children) {
+        if (!(child instanceof TFile)) continue;
+        if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
+        const mtime = child.stat?.mtime ?? 0;
         if (mtime > latest) latest = mtime;
       }
     }
@@ -1462,13 +1596,11 @@ export class TutorView extends ItemView {
       const row = this.searchResultsEl.createEl("button", {
         cls: "edge-tutor-search-result" + (i === this.searchCursor ? " active" : ""),
       });
-      const kind = row.createEl("span", { text: hit.role, cls: "edge-tutor-search-result-kind" });
-      void kind;
-      const excerpt = row.createEl("span", {
+      row.createEl("span", { text: hit.role, cls: "edge-tutor-search-result-kind" });
+      row.createEl("span", {
         text: (hit.lineId ? hit.lineId + " · " : "") + (hit.excerpt || ""),
         cls: "edge-tutor-search-result-text",
       });
-      void excerpt;
       row.addEventListener("click", () => this.navigateSearchHit(i));
     });
     this.searchResultsEl.style.display = "block";
@@ -1491,6 +1623,7 @@ export class TutorView extends ItemView {
         ...src,
         id: newId,
         parentId: newParent,
+        nodeFile: undefined, // 剥离源工作区 nodeFile（粘贴后是新线程，不指向源文件）
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
@@ -1508,20 +1641,172 @@ export class TutorView extends ItemView {
     this.setStatus(`已粘贴 ${this.branchClipboard.length} 个节点为根${this.branchClipboardMessages.length ? `（含 ${this.branchClipboardMessages.length} 条消息）` : ""}`);
   }
 
-  /** 刷新工作区下拉框 */
+  /**
+   * 激活指定工作区（面板下拉 / 设置页教材联动共用）。
+   * 成功时持久化由调用方负责（下拉监听 / setTextbookRoot）；busy（回答生成中）拒绝切换。
+   */
+  async activateWorkspace(target: string): Promise<void> {
+    if (target === this.currentWorkspace) return;
+    if (this.busy) {
+      new Notice("回答生成中，暂不能切换工作区");
+      await this.refreshWorkspaceSelect();
+      return;
+    }
+    try {
+      await this.plugin.saveConv(this.conv);
+      this.currentWorkspace = target;
+      this.conv = await this.ensureWorkspaceLoaded(target);
+      this.lastRenderedMapId = null;
+      // 清搜索状态
+      this.searchQuery = "";
+      this.searchHits = [];
+      this.searchCursor = -1;
+      if (this.searchEl) this.searchEl.value = "";
+      await this.renderAll();
+      await this.restoreDraft();
+      this.setStatus("已切换到工作区：" + (target === "main" ? "默认" : target));
+      await this.refreshWorkspaceSelect(); // 程序触发的切换也要让下拉选中态跟随
+    } catch (e) {
+      new Notice("切换工作区失败：" + (e as Error).message.slice(0, 80));
+      await this.refreshWorkspaceSelect();
+    }
+  }
+
+  /** 刷新工作区按钮标签 + 树形弹层内容（新建/改名/激活后调用） */
   private async refreshWorkspaceSelect() {
     const workspaces = await this.plugin.discoverWorkspaces();
-    this.wsSelect.empty();
-    // 显示优化：教材容器用 📘 前缀，子工作区缩进显示
-    for (const ws of workspaces) {
-      const text = ws === "main" ? "默认工作区" : ws.includes("/") ? `📘 ${ws}` : `📘 ${ws}`;
-      const opt = this.wsSelect.createEl("option", { value: ws, text });
-      if (ws === this.currentWorkspace) opt.setAttribute("selected", "selected");
-    }
-    // 当前工作区不在列表（迁移/改名）→ 自动切到第一个可用工作区（onOpen 会加载它）
+    // 当前工作区不在列表（迁移/改名）→ 自动切到第一个可用工作区（onOpen 会加载它）。
+    // 但目录仍存在（如切教材联动刚建的空容器，尚无节点）→ 保留，不切走
     if (workspaces.length > 0 && !workspaces.includes(this.currentWorkspace)) {
-      this.currentWorkspace = workspaces[0];
+      const exists = await this.plugin.workspaceFolderExists(this.currentWorkspace);
+      if (!exists) this.currentWorkspace = workspaces[0];
     }
+    const label = this.currentWorkspace === "main" ? "默认工作区" : this.currentWorkspace.split("/").pop()!;
+    this.wsTrigger.setText(`📁 ${label}`);
+    this.rebuildWsTree(workspaces);
+  }
+
+  /** 选择工作区（树叶子 / 容器↗按钮）：激活 + 持久化 + 关弹层（原下拉 change 逻辑） */
+  private async selectWorkspace(target: string) {
+    if (target === this.currentWorkspace) {
+      this.closeWsPopover();
+      return;
+    }
+    await this.activateWorkspace(target);
+    if (this.currentWorkspace === target) {
+      this.plugin.settings.activeWorkspace = target;
+      await this.plugin.saveSettings();
+    }
+    this.closeWsPopover();
+  }
+
+  private toggleWsPopover() {
+    if (this.wsPopOpen) this.closeWsPopover();
+    else void this.openWsPopover();
+  }
+
+  private async openWsPopover() {
+    await this.refreshWorkspaceSelect(); // 打开前刷新（新建/改名后仍准）
+    const r = this.wsTrigger.getBoundingClientRect();
+    this.wsPop.style.left = `${r.left}px`;
+    this.wsPop.style.top = `${r.bottom + 4}px`;
+    this.wsPop.style.minWidth = `${Math.max(r.width, 220)}px`;
+    this.wsPop.hidden = false;
+    this.wsPopOpen = true;
+  }
+
+  private closeWsPopover() {
+    if (!this.wsPopOpen) return;
+    this.wsPop.hidden = true;
+    this.wsPopOpen = false;
+  }
+
+  /** 工作区 id 列表（形如 教材名/子工作区名，可任意层级）→ 树 */
+  private buildWsTreeData(workspaces: string[]): WsNode[] {
+    const root: WsNode = { name: "", children: [] };
+    const ensure = (parent: WsNode, name: string): WsNode => {
+      let n = parent.children.find((c) => c.name === name);
+      if (!n) {
+        n = { name, children: [] };
+        parent.children.push(n);
+      }
+      return n;
+    };
+    for (const ws of workspaces) {
+      if (ws === "main") {
+        root.children.push({ name: "默认工作区", id: "main", children: [] });
+        continue;
+      }
+      const segs = ws.split("/");
+      let cur = root;
+      for (let i = 0; i < segs.length; i++) {
+        cur = ensure(cur, segs[i]);
+        if (i === segs.length - 1) cur.id = ws; // 末段 = 可激活的工作区
+      }
+    }
+    const sort = (list: WsNode[]) => {
+      list.sort(
+        (a, b) => (a.children.length ? 0 : 1) - (b.children.length ? 0 : 1) || a.name.localeCompare(b.name, "zh")
+      );
+      for (const n of list) if (n.children.length) sort(n.children);
+    };
+    sort(root.children);
+    return root.children;
+  }
+
+  /** 重建树弹层内容；当前工作区的祖先目录自动展开 */
+  private rebuildWsTree(workspaces: string[]) {
+    this.wsPop.empty();
+    this.wsPop.createEl("div", { text: "选择工作区", cls: "edge-tutor-ws-pop-header" });
+    const curSegs = this.currentWorkspace.split("/").slice(0, -1); // 祖先目录名
+    const expandSet = new Set(curSegs);
+    const nodes = this.buildWsTreeData(workspaces);
+    if (nodes.length === 0) {
+      this.wsPop.createEl("div", { text: "（暂无工作区，点 ＋ 新建）", cls: "edge-tutor-ws-tree-empty" });
+      return;
+    }
+    for (const n of nodes) this.renderWsTreeNode(this.wsPop, n, 0, expandSet);
+  }
+
+  private renderWsTreeNode(container: HTMLElement, node: WsNode, depth: number, expandSet: Set<string>) {
+    const isFolder = node.children.length > 0;
+    const row = container.createEl("div", { cls: "edge-tutor-ws-tree-row" });
+    row.style.paddingLeft = `${6 + depth * 14}px`;
+    if (isFolder) {
+      row.createSpan({ cls: "edge-tutor-ws-tree-toggle", text: "▸" });
+      row.createSpan({ cls: "edge-tutor-ws-tree-name", text: node.name });
+      // 文件夹行点击 = 展开/收起；容器工作区本身由 ↙ 按钮激活
+      const sub = container.createEl("div", { cls: "edge-tutor-ws-tree-sub" });
+      sub.hidden = true;
+      const toggleIcon = row.querySelector(".edge-tutor-ws-tree-toggle")!;
+      row.onclick = (e) => {
+        e.stopPropagation();
+        const opening = sub.hidden;
+        toggleIcon.setText(opening ? "▾" : "▸");
+        sub.hidden = !opening;
+      };
+      if (node.id) {
+        const go = row.createEl("button", { cls: "edge-tutor-ws-tree-go", attr: { title: "打开容器工作区" } });
+        go.setText("↗");
+        go.onclick = (e) => {
+          e.stopPropagation();
+          void this.selectWorkspace(node.id!);
+        };
+      }
+      // 当前工作区在祖先链上 → 默认展开
+      if (expandSet.has(node.name)) {
+        toggleIcon.setText("▾");
+        sub.hidden = false;
+      }
+      for (const c of node.children) this.renderWsTreeNode(sub, c, depth + 1, expandSet);
+    } else {
+      row.createSpan({ cls: "edge-tutor-ws-tree-toggle", text: "·" });
+      row.createSpan({ cls: "edge-tutor-ws-tree-name", text: node.name });
+      row.onclick = () => {
+        void this.selectWorkspace(node.id!);
+      };
+    }
+    if (node.id && node.id === this.currentWorkspace) row.addClass("is-current");
   }
 
   /** 导图平移/滚动（Zotero：拖空白平移 + wheel 横向滚动） */
@@ -1720,6 +2005,7 @@ export class TutorView extends ItemView {
             ...src,
             id: newId,
             parentId: newParent,
+            nodeFile: undefined, // 剥离源工作区 nodeFile（粘贴后是新线程，不指向源文件）
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           });

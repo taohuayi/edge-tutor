@@ -21,7 +21,7 @@ src/
 ├── conv.ts       会话数据模型（纯函数可单测）：ConvMessage / ConvThread / Conv
 ├── tutor.ts      CognitiveNode / ParkedQuestion 模型 + extractMentorResponse（纯函数）
 ├── canvas.ts     思维导图布局纯函数（mindMapLayout/layoutToCoordinates/buildEdgePath，可单测）
-├── nodeops.ts    节点树操作纯函数（cloneBranch/attachBranch/renameNode/deleteNode，可单测）
+├── suggest.ts    @ 引用补全（NoteSuggest extends AbstractInputSuggest）
 ├── export.ts     导出 MD/JSON、导入 JSON（纯函数）
 ├── guide.ts      方向指引 prompt 组装 + 结果解析
 ├── ai.ts         Provider 预设 + chat/completions + streamCompletion（SSE 流式）
@@ -32,7 +32,7 @@ src/
 ```
 
 **分层铁律**：
-- 纯函数模块（conv/tutor/canvas/nodeops/export/guide）= 无 obsidian 依赖，可 esbuild bundle 后 node 单测
+- 纯函数模块（conv/tutor/canvas/export/guide）= 无 obsidian 依赖，可 esbuild bundle 后 node 单测
 - view.ts / main.ts / agentview.ts = UI + vault API，不写业务逻辑
 - 业务逻辑改动优先落在纯函数模块，UI 只做渲染与事件
 
@@ -212,7 +212,7 @@ interface Conv {
 6. **MarkdownRenderer.render 调用处加 `void` 前缀**——保持调用方同步返回（`void MarkdownRenderer.render(this.app, content, el, src, this)`），否则类型报错或调用方全要改 async
 7. **功能必须可见**——新功能要有明确入口（面板按钮/右键菜单/命令），不要只注册命令。用户看不到入口会以为坏了
 8. **公式格式**：LLM 输出 `\(...\)`/`\[...\]`，Obsidian MathJax 只认 `$...$`/`$$...$$`。`normalizeMath` 已存在（ai.ts 或纯函数模块），**流式渲染时只对完整段落调用**
-9. **纯函数铁律**：conv/canvas/nodeops/tutor 等纯函数模块不改入参（浅拷贝节点 + 深拷贝 anchor），单测断言"原数组未变"
+9. **纯函数铁律**：conv/canvas/tutor 等纯函数模块不改入参（浅拷贝节点 + 深拷贝 anchor），单测断言"原数组未变"
 10. **tsconfig lib 全小写**（见第 5 节）；递归函数必须显式返回类型（TS7023）
 11. **esbuild 报错带精确列号，比 tsc 好定位**；修完必跑 tsc + esbuild 双重验证
 12. **面板内 AI 回答可选中**：CSS `.edge-tutor-msg-content { user-select: text; }`（已存在，别删）

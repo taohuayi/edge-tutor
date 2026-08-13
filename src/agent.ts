@@ -1,5 +1,5 @@
 /**
- * Agent 执行模式：插件内嵌 agent（DeepSeek 官方通道，支持 function calling）
+ * Agent 执行模式：插件内嵌 agent（OpenAI 兼容通道，支持 function calling）
  *
  * 架构（用户确认 2026-08-07）：
  *   - 对话模式 → chat2api 反代（免费号，纯文本）——见 ai.ts
@@ -80,7 +80,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "create_node",
     description:
-      "创建认知节点笔记（沉淀知识到认知地图）。参数：title 节点标题（简洁、具体，同一概念合并）；content 节点正文（Markdown，含理解沉淀）；parentTitle 父节点标题（可省略=挂根）。写入后自动更新 MOC。",
+      "创建认知节点笔记（沉淀知识到认知地图）。参数：title 节点标题（简洁、具体）；content 节点正文（Markdown，含理解沉淀）；parentTitle 父节点标题（可省略=挂根）。每次创建新节点文件，同名自动追加 -2/-3，不合并。写入后自动更新 MOC。",
     parameters: {
       type: "object",
       properties: {

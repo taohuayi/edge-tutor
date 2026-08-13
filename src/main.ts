@@ -2,22 +2,64 @@
  * 认知边缘导师（Edge Tutor）插件入口 —— 重写版
  *
  * 架构（对齐 docs/认知边缘驱动学习系统_骨架设计.md）：
- *   L1 交互界面 → 面板 ItemView（view.ts）+ 命令/设置（本文件）
+ *   L1 交互界面 → 面板 ItemView（view.ts / agentview.ts）+ 命令/设置（本文件）
  *   L2 追根陪练 → ai.ts + guide.ts
  *   L3 入口生成 → guide.ts（基于全书推荐）
- *   L4 认知地图 → data.ts（单一数据源：节点 .md 文件）
+ *   L4 认知地图 → conv.ts（会话模型）+ tutor.ts（节点模型）+ data.ts（节点文件读写）
+ *
+ * 单一数据源（SSOT）：.conv.json 是运行态真源（messages + threads + parkingLot），
+ * 节点 .md 是沉淀镜像（frontmatter 机器可读，会话为空时从节点重建）。
  *
  * 关键修复（对比旧版）：
- *   - 不再维护两套消息/两棵树：节点文件是线程的唯一真源
+ *   - 不再维护两套消息/两棵树：会话一份（.conv.json），节点一份（.md 镜像）
  *   - currentWorkspace() 不再写死 "main"，导出/沉淀基于真实工作区
  *   - 首次启动做旧 .conv.json 迁移（一次性，导入后标记）
  */
-import { App, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, WorkspaceLeaf } from "obsidian";
-import { DEFAULT_SETTINGS, TutorSettings, PRESET_PROVIDERS, agentConfig } from "./ai";
+import { App, FileSystemAdapter, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, WorkspaceLeaf } from "obsidian";
+import { DEFAULT_SETTINGS, TutorSettings, PRESET_PROVIDERS, agentConfig, chatCompletion, ChatMessage, resolveEmbeddingApiKey } from "./ai";
 import { buildVaultExecutor, AgentStep, AgentResult, runAgent } from "./agent";
 import { runOpenCodeTask, OpenCodeConfig, OpenCodeResult } from "./opencode";
-import { buildMocContent, buildNodeContent, CognitiveNode, parseNodeFromContent } from "./tutor";
-import { parseSearchResult, normalizeQuery, SearchRef, SearchHit, parseChapterIndex } from "./search";
+import { buildMocContent, buildNodeContent, CognitiveNode, makeNodeTitle, parseNodeFromContent } from "./tutor";
+import {
+  parseSearchResult,
+  normalizeQuery,
+  extractQuestionPart,
+  SearchRef,
+  SearchHit,
+  parseBooksYaml,
+  TextbookEntry,
+  parseChapterIndex,
+  normalizeTextForMatch,
+  searchTextbookIndex,
+  TextbookIndex,
+  formatRefsText,
+  RewriteOutput,
+  parseRewriteOutput,
+  parseQueryUnderstanding,
+  chunkTextbook,
+  SearchChunk,
+  rrfMerge,
+  diverseTop,
+  buildBm25Index,
+  bm25Search,
+  Bm25Index,
+} from "./search";
+import {
+  VectorIndex,
+  VectorIndexFile,
+  VectorHit,
+  encodeVecs,
+  decodeVecs,
+  cosine,
+  topKVectors,
+  loadEmbedder,
+  loadReranker,
+  loadRemoteEmbedder,
+  loadRemoteReranker,
+  MODEL_ID,
+  Embedder,
+  Reranker,
+} from "./vector";
 import { CognitiveMapSummary } from "./guide";
 import { Conv, freshConv, parseConv, serializeConv, buildConvFromNodes, cognitiveMapSummary } from "./conv";
 import { formatConvMarkdown, parseJSONBackup } from "./export";
@@ -30,10 +72,21 @@ import {
 } from "./data";
 
 import { PromptModal, TutorView, VIEW_TYPE_TUTOR } from "./view";
+
+/** 条件 rerank 触发阈值（向量置信分；< 此值或两路分歧才重排，保守值可调） */
+const RERANK_TRIGGER_SCORE = 0.35;
+
+/** 设置页教材下拉的"手动输入路径"哨兵选项值 */
+const CUSTOM_ROOT = "__custom__";
 import { AgentConv, AgentView, freshAgentConv, VIEW_TYPE_AGENT } from "./agentview";
 
 export default class EdgeTutorPlugin extends Plugin {
   settings: TutorSettings = DEFAULT_SETTINGS;
+
+  /** 远程 embedding 实例缓存（冒烟验证通过后复用；本地路径由 loadEmbedder 内部缓存） */
+  private remoteEmbedder: Embedder | null = null;
+  /** 远程实例对应的配置指纹（baseUrl|model|dim；变更即失效重建，设置面板改模型后自动生效） */
+  private remoteEmbedderKey = "";
 
   async onload() {
     await this.loadSettings();
@@ -122,11 +175,42 @@ export default class EdgeTutorPlugin extends Plugin {
       })
     );
 
+    // 教材索引失效：教材文件变更/增删 → 下次检索时重建（重建 <1s，不做增量）
+    const invalidateTextIndex = (file: TFile) => {
+      if (file.path.startsWith(this.settings.textbookRoot)) this.textIndex = null;
+    };
+    this.registerEvent(this.app.vault.on("modify", invalidateTextIndex));
+    this.registerEvent(this.app.vault.on("delete", invalidateTextIndex));
+    this.registerEvent(this.app.vault.on("create", invalidateTextIndex));
+
+    // 教材向量索引状态栏（常驻显示：待启动/构建中 N/M/就绪/已加载/不可用，一目了然）
+    this.vectorStatusEl = this.addStatusBarItem();
+    this.updateVectorStatus("🧠 向量：待启动");
+
+    this.addCommand({
+      id: "rebuild-textbook-vector-index",
+      name: "🧠 重建教材向量索引",
+      callback: async () => {
+        const root = this.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+        const active = await this.loadActiveEmbedder();
+        if (active) void this.buildVectorIndex(root, active);
+      },
+    });
+
+    // 教材向量索引后台预热（首次：下载模型+构建；已有落盘：加载）。不阻塞启动与回答
+    window.setTimeout(() => {
+      void this.ensureVectorIndex();
+    }, 3000);
+
     this.addSettingTab(new EdgeTutorSettingTab(this.app, this));
+
+    // 教材注册表预热（books.yaml；设置页下拉数据源）
+    void this.refreshTextbookRegistry();
   }
 
   async onunload() {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TUTOR);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_AGENT);
   }
 
   async loadSettings() {
@@ -135,6 +219,67 @@ export default class EdgeTutorPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  /** 教材注册表缓存（books.yaml 解析；设置页教材下拉的数据源，失败为空数组 → 降级手动输入） */
+  textbookRegistry: TextbookEntry[] = [];
+
+  /** 刷新教材注册表（books.yaml 是 ingest_book.py 维护的权威注册表；读取失败静默降级） */
+  async refreshTextbookRegistry(): Promise<void> {
+    try {
+      const raw = await this.app.vault.adapter.read("learning/peizhi/learn/_materials/books.yaml");
+      this.textbookRegistry = parseBooksYaml(raw);
+    } catch (e) {
+      console.warn("[edge-tutor] books.yaml 读取失败，教材下拉降级为手动输入", (e as Error).message.slice(0, 100));
+      this.textbookRegistry = [];
+    }
+  }
+
+  /** 切换教材根目录（设置页下拉/手动输入共用）：写设置 + 失效教材缓存 + 教材-工作区联动 */
+  async setTextbookRoot(root: string): Promise<void> {
+    const normalized = root.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!normalized || normalized === this.settings.textbookRoot) return;
+    this.settings.textbookRoot = normalized;
+    // 教材变更 → 内存缓存强制失效：textIndex/vecIndex 自带 root 校验会自动跟随，
+    // 但 searchCache 与 chapterIndex 无 root 键，必须手动清（防止旧教材结果串到新教材）
+    this.searchCache.clear();
+    this.chapterIndex = null;
+    this.textIndex = null;
+    this.bm25Idx = null;
+    this.vecIndex = null;
+    this.vecIndexRoot = "";
+    // 教材-工作区联动：切到同名教材工作区（无则自动建为教材容器），激活状态持久化
+    // （工作区模型：教材根工作区 + 教材下子工作区，如 认知边缘/张宇基础30讲/代数变形技巧）
+    const wsName = this.workspaceNameForTextbook(normalized);
+    if (wsName) {
+      const workspaces = await this.discoverWorkspaces();
+      if (!workspaces.includes(wsName)) {
+        await this.ensureFolder(this.workspaceFolderPathOf(wsName));
+      }
+      this.settings.activeWorkspace = wsName;
+    }
+    await this.saveSettings();
+    if (wsName) {
+      const view = this.getTutorView();
+      if (view && view.currentWorkspace !== wsName) await view.activateWorkspace(wsName);
+    }
+    new Notice(`📚 教材已切换：${normalized}`);
+  }
+
+  /** 教材 root → 教材工作区名（books.yaml 的 name 字段；自定义路径不在注册表 → null 不联动） */
+  workspaceNameForTextbook(root: string): string | null {
+    const b = this.textbookRegistry.find((x) => x.root === root);
+    if (!b || !b.name) return null;
+    const clean = b.name.replace(/[\\/:*?"<>|\s]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
+    return clean || null;
+  }
+
+  /** 教材-工作区绑定（onOpen 兜底）：当前教材在注册表有对应工作区名 → 确保容器存在 */
+  async ensureWorkspaceForTextbook(): Promise<string | null> {
+    const wsName = this.workspaceNameForTextbook(this.settings.textbookRoot);
+    if (!wsName) return null;
+    await this.ensureFolder(this.workspaceFolderPathOf(wsName));
+    return wsName;
   }
 
   /** ===== 迁移：旧 .conv.json 的线程 → 节点 .md（一次性） ===== */
@@ -157,7 +302,7 @@ export default class EdgeTutorPlugin extends Plugin {
           for (const t of legacy) {
             if (!t || typeof t.title !== "string") continue;
             const node: CognitiveNode = {
-              title: t.title,
+              title: makeNodeTitle(t.title),
               content: "",
               parentTitle: undefined,
               anchor: { sourcePath: t.anchor?.sourcePath ?? "", quote: t.anchor?.quote ?? "" },
@@ -277,8 +422,18 @@ export default class EdgeTutorPlugin extends Plugin {
     return workspaceFolderPath(this.settings.nodeFolder, workspace);
   }
 
-  /** 特殊目录：不作为工作区/教材容器（concepts/t-maps/images 是资源与跨教材活页） */
-  private static readonly SPECIAL_FOLDERS = new Set(["concepts", "t-maps", "images"]);
+  /** 工作区目录是否存在（空容器也算——教材联动刚建、尚无节点时也要保留激活态） */
+  async workspaceFolderExists(workspace: string): Promise<boolean> {
+    if (workspace === "main") return true;
+    try {
+      return await this.app.vault.adapter.exists(this.workspaceFolderPathOf(workspace));
+    } catch {
+      return false;
+    }
+  }
+
+  /** 特殊目录：不作为工作区/教材容器（concepts/t-maps/images 是资源与跨教材活页；_exports 是备份树） */
+  private static readonly SPECIAL_FOLDERS = new Set(["concepts", "t-maps", "images", "_exports"]);
 
   /**
    * 发现所有工作区（两级）：
@@ -318,6 +473,20 @@ export default class EdgeTutorPlugin extends Plugin {
     return [...new Set(ws)];
   }
 
+  /**
+   * 教材根绝对路径（opencode 检索指令用）。
+   * 不依赖 opencode serve 的工作目录（实测 cwd 可能落在任意目录，相对路径会解析失败导致代理全盘递归扫描）；
+   * 非本地文件系统（移动端等）退回相对路径。
+   */
+  private textbookRootAbs(): string {
+    const root = this.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    const adapter = this.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) {
+      return (adapter.getBasePath() + "/" + root).replace(/\\/g, "/");
+    }
+    return root;
+  }
+
   /** 读取教材总目录内容 */
   async readToc(): Promise<string> {
     // 新结构（ingest_book.py 规范）：toc.md 在教材根
@@ -355,13 +524,25 @@ export default class EdgeTutorPlugin extends Plugin {
     return listNodes(this.app, this.workspaceFolderPathOf(ws));
   }
 
-  /** 创建认知节点笔记（冲突自动加序号） */
-  async createNode(node: CognitiveNode): Promise<TFile> {
+  /**
+   * 创建认知节点笔记（每问一结点：一律新建，同名自动 -2/-3，不合并）。
+   * opts.updatePath：同线程重复沉淀/重新生成时原位更新该文件（幂等键是线程的 nodeFile，不是标题——
+   * 一字不差的重复提问是不同线程，绝不能按标题查重互相覆盖）。
+   */
+  async createNode(node: CognitiveNode, opts?: { updatePath?: string }): Promise<TFile> {
     const ws = node.workspace ?? this.currentWorkspace();
     const folder = this.workspaceFolderPathOf(ws);
     await this.ensureFolder(folder);
-    const path = uniqueNodePath(this.app, folder, node.title);
     const content = node.content || buildNodeContent(node);
+    if (opts?.updatePath && opts.updatePath.startsWith(folder + "/")) {
+      const target = this.app.vault.getAbstractFileByPath(opts.updatePath);
+      if (target instanceof TFile) {
+        await this.app.vault.modify(target, content);
+        await this.updateMoc(ws);
+        return target;
+      }
+    }
+    const path = uniqueNodePath(this.app, folder, node.title);
     const f = await this.app.vault.create(path, content);
     await this.updateMoc(ws);
     return f;
@@ -417,18 +598,30 @@ export default class EdgeTutorPlugin extends Plugin {
     await this.ensureFolder(this.workspaceFolderPathOf(bookPrefix + clean));
   }
 
-  /** 重命名工作区（移动文件夹） */
-  async renameWorkspace(oldName: string, newName: string): Promise<void> {
+  /**
+   * 重命名工作区（移动文件夹）。
+   * 子工作区（含 /）保留教材容器前缀：张宇基础30讲/双曲函数体系 → 张宇基础30讲/新名，
+   * 不再挪到根级。返回最终工作区 id（失败/同名返回 null，调用方保持现状）。
+   */
+  async renameWorkspace(oldName: string, newName: string): Promise<string | null> {
+    const clean = newName.replace(/[\\/:*?"<>|\s]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
+    if (!clean || clean === oldName) return null;
+    const slash = oldName.indexOf("/");
+    const finalId = slash > 0 ? oldName.slice(0, slash + 1) + clean : clean;
     const oldPath = this.workspaceFolderPathOf(oldName);
-    const newPath = this.workspaceFolderPathOf(newName);
+    const newPath = this.workspaceFolderPathOf(finalId);
     const oldFolder = this.app.vault.getAbstractFileByPath(oldPath);
     if (oldFolder instanceof TFolder) {
       try {
         await this.app.vault.rename(oldFolder, newPath);
+        return finalId;
       } catch (e) {
         new Notice("重命名失败：" + (e as Error).message.slice(0, 80));
+        return null;
       }
     }
+    new Notice("重命名失败：找不到工作区目录");
+    return null;
   }
 
   /**
@@ -457,11 +650,32 @@ export default class EdgeTutorPlugin extends Plugin {
     }
     await this.saveConv(conv);
 
-    // 4. 删除节点文件（按标题匹配，进回收站）
+    // 4. 删除节点文件（进回收站）
+    //    先按标题精确匹配；未命中时（线程标题被 ✏️ 改写、或沉淀时标题被 makeNodeTitle 清洗）
+    //    遍历工作区直接节点，按 title / rootQuestion 匹配文件再删除。
     const folder = this.workspaceFolderPathOf(workspace);
     for (const title of titles) {
       if (!title) continue;
-      const f = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
+      let f = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
+      if (!(f instanceof TFile)) {
+        const dir = this.app.vault.getAbstractFileByPath(folder);
+        if (dir instanceof TFolder) {
+          for (const child of dir.children) {
+            if (!(child instanceof TFile) || !child.name.endsWith(".md")) continue;
+            if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
+            try {
+              const content = await this.app.vault.cachedRead(child);
+              const node = parseNodeFromContent(child.basename, content, child.path);
+              if (node.title === title || node.rootQuestion === title) {
+                f = child;
+                break;
+              }
+            } catch (e) {
+              // 单个文件解析失败跳过，不影响其他文件
+            }
+          }
+        }
+      }
       if (f instanceof TFile) {
         try {
           await this.app.vault.trash(f, true);
@@ -662,10 +876,11 @@ export default class EdgeTutorPlugin extends Plugin {
     return freshAgentConv();
   }
 
-  /** 保存执行面板记录 */
+  /** 保存执行面板记录（同步当前认知工作区，供恢复时定位沉淀落点） */
   async saveAgentConv(conv: AgentConv): Promise<void> {
     const path = this.agentConvPath();
     try {
+      conv.workspace = this.currentWorkspace() || conv.workspace;
       await this.ensureFolder(this.settings.nodeFolder);
       await this.app.vault.adapter.write(path, JSON.stringify(conv, null, 2));
     } catch (e) {
@@ -696,7 +911,9 @@ export default class EdgeTutorPlugin extends Plugin {
     const nodes: CognitiveNode[] = [];
     for (const f of files) {
       const content = await this.app.vault.cachedRead(f);
-      nodes.push(parseNodeFromContent(f.basename, content, f.path));
+      const node = parseNodeFromContent(f.basename, content, f.path);
+      node.filePath = f.path;
+      nodes.push(node);
     }
     return buildConvFromNodes(nodes, ws);
   }
@@ -773,7 +990,7 @@ export default class EdgeTutorPlugin extends Plugin {
       const result = await runOpenCodeTask(
         {
           base: s.opencodeBase || "http://127.0.0.1:10999",
-          provider: s.opencodeProvider || "deepseek",
+          provider: s.opencodeProvider || "opencode-go",
           model: s.opencodeModel || "deepseek-v4-flash",
         } as OpenCodeConfig,
         input,
@@ -873,8 +1090,24 @@ export default class EdgeTutorPlugin extends Plugin {
    * - 结果只提供给问答模型（respond 注入 system），不落盘、不显示
    */
   private searchCache = new Map<string, { hit: SearchHit; ts: number }>();
+  /** BM25 倒排缓存（与 textIndex 绑定，索引重建时失效） */
+  private bm25Idx: Bm25Index | null = null;
   /** 章节地图缓存（toc.md → 讲次标题列表） */
   private chapterIndex: { file: string; title: string }[] | null = null;
+  /** 教材行索引缓存（懒构建；教材文件变更/root 变更即失效） */
+  private textIndex: TextbookIndex[] | null = null;
+  private textIndexRoot = "";
+  /** 教材向量索引（懒构建/加载落盘；root 变更即失效重建） */
+  private vecIndex: VectorIndex | null = null;
+  private vecIndexRoot = "";
+  private vecBuilding = false;
+  /** 向量索引状态栏元素（加载/构建/就绪常驻显示） */
+  private vectorStatusEl: HTMLElement | null = null;
+
+  /** 更新状态栏向量索引状态（简短文本，Obsidian 底部状态栏） */
+  private updateVectorStatus(text: string): void {
+    if (this.vectorStatusEl) this.vectorStatusEl.setText(text);
+  }
 
   /** 读取/缓存章节地图（教材 toc.md 解析） */
   private async getChapterIndex(): Promise<{ file: string; title: string }[]> {
@@ -888,14 +1121,126 @@ export default class EdgeTutorPlugin extends Plugin {
     return this.chapterIndex ?? [];
   }
 
+  /**
+   * 懒构建教材行索引（仅 root 下 md，含 OCR 归一化）。
+   * 13MB → 内存行数组，构建 <1s；root 变更/教材文件变更即失效重建。
+   */
+  private async ensureTextbookIndex(): Promise<TextbookIndex[]> {
+    const root = this.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (this.textIndex && this.textIndexRoot === root) return this.textIndex;
+    const files = this.app.vault
+      .getMarkdownFiles()
+      .filter((f) => f.path.startsWith(root + "/") && f.name !== "toc.md");
+    const index: TextbookIndex[] = [];
+    for (const f of files) {
+      try {
+        const text = await this.app.vault.cachedRead(f);
+        index.push({
+          path: f.path,
+          lines: text.split("\n").map((t) => ({ text: t, norm: normalizeTextForMatch(t) })),
+        });
+      } catch (e) {
+        // 单文件读取失败跳过，不阻断整个索引
+        console.warn("[edge-tutor] 教材索引跳过文件", f.path, (e as Error).message.slice(0, 100));
+      }
+    }
+    this.textIndex = index;
+    this.textIndexRoot = root;
+    this.bm25Idx = null; // BM25 倒排随行索引失效
+    return index;
+  }
+
+  /** 教材检索路径日志（cache | index | opencode | grep），验证/排障用 */
+  private logSearchPath(tag: string, ms: number, hit: boolean): void {
+    console.info(`[edge-tutor] 教材检索: ${tag}, ${ms}ms, ${hit ? "命中" : "未命中"}`);
+  }
+
+  /**
+   * LLM 查询理解 + 章节路由：一步非流式调用（≤2s 超时，失败返回 null）把口语问题
+   * 转为结构化理解（concept/intent/knowledge_need/related_terms/chapters/3 个查询变体）——
+   * 解决"表述完全不同/跨章节综合"类查询。复用对话通道（chat2api），不额外消耗 agent 通道。
+   * JSON 输出优先；解析失败降级旧【关键词】格式解析（行为不变）。
+   */
+  private async rewriteQuery(rawQ: string): Promise<RewriteOutput | null> {
+    const t0 = Date.now();
+    try {
+      const chapters = await this.getChapterIndex();
+      const chapterList =
+        chapters.length > 0 ? chapters.map((c) => c.title).join("、") : "（无章节地图）";
+      const prompt = [
+        "把下面的学生问题改写成结构化检索输入，只输出一个 JSON 对象（不要 markdown 围栏、不要解释）。",
+        "",
+        "【教材章节列表】",
+        chapterList,
+        "",
+        'JSON 格式：{ "concept": "核心概念名（教材确切术语，如\\"拉格朗日中值定理\\"）",',
+        '  "intent": "求理解 | 找例题 | 找定义 | 找反例 | 求证明 | 其他",',
+        '  "knowledge_need": "问句中隐含的检索目标（一句话，用教材语言，如\\"拉格朗日中值定理的适用条件\\"）",',
+        '  "related_terms": ["同义/等价表述或强相关概念 2-3 个"],',
+        '  "chapters": ["最可能涉及的讲次标题（从上面的列表选 1-2 个，不确定则空数组）"],',
+        '  "queries": [',
+        '    "原始问题的检索表述",',
+        '    "教材语言表述（术语化，如\\"拉格朗日中值定理的适用条件\\"）",',
+        '    "概念扩展表述（换个角度描述同一问题）"',
+        "  ]",
+        "}",
+        "",
+        `【学生问题】${rawQ}`,
+      ].join("\n");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
+      try {
+        const answer = await chatCompletion(
+          this.settings,
+          [
+            { role: "system", content: "你是教材检索查询理解器，只输出规定 JSON，不要解释。" },
+            { role: "user", content: prompt },
+          ] as ChatMessage[],
+          { signal: controller.signal, maxTokens: 500 }
+        );
+        // 结构化 JSON 优先：keywords = concept + knowledge_need + related_terms（进 L1 子串路）
+        const u = parseQueryUnderstanding(answer);
+        if (u) {
+          const out: RewriteOutput = {
+            keywords: [u.concept, u.knowledgeNeed.slice(0, 20), ...u.relatedTerms]
+              .map((k) => k.trim())
+              .filter((k) => k.length >= 2)
+              .slice(0, 6),
+            chapters: u.chapters,
+            synonyms: u.relatedTerms,
+            queries: u.queries,
+          };
+          console.info(`[edge-tutor] 查询理解 ${Date.now() - t0}ms`, JSON.stringify(u).slice(0, 300));
+          return out;
+        }
+        // 降级旧路径：LLM 按旧格式输出时行为不变（单查询向量）
+        const r = parseRewriteOutput(answer);
+        if (r.keywords.length > 0 || r.chapters.length > 0 || r.synonyms.length > 0) {
+          console.info(`[edge-tutor] 查询改写（旧格式降级）${Date.now() - t0}ms`, JSON.stringify(r).slice(0, 200));
+          return r;
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (e) {
+      console.warn("[edge-tutor] 查询改写失败，跳过", (e as Error).message.slice(0, 100));
+    }
+    return null;
+  }
+
   async semanticTextbookSearch(query: string): Promise<SearchHit> {
     const s = this.settings;
     const root = s.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
     const rawQ = String(query ?? "").trim().slice(0, 200);
     if (!rawQ) return { found: false, text: "", count: 0, refs: [] };
 
-    // L0：会话级缓存（query 归一化）
-    const qKey = normalizeQuery(rawQ);
+    // L0：会话级缓存（query 归一化）。key 只取问题本体——选中原文追问时消息带
+    // 【由这段原文引出】前缀+原文，整串归一化会把问题挤出 40 字符 key，
+    // 同一段原文的不同问题互相撞缓存只真检索一次（修复，回归测试见
+    // test/retrieval-cache-key.test.mjs）；rawQFull 不走 200 截断，
+    // 原文再长也不影响 key。
+    const rawQFull = String(query ?? "").trim();
+    const qKey = normalizeQuery(extractQuestionPart(rawQFull));
     if (qKey) {
       const cached = this.searchCache.get(qKey);
       if (cached) {
@@ -906,9 +1251,137 @@ export default class EdgeTutorPlugin extends Plugin {
       }
     }
 
+    const t0 = Date.now();
     let hit: SearchHit = { found: false, text: "", count: 0, refs: [] };
 
-    // 1. opencode 全量语义检索（50s 超时：语义定位 + 行号需多轮读文件，实测 15-45s）
+    // L1+L2：本地归一化行索引（毫秒级，OCR 容错；无条件先查）。
+    // 查询改写与首轮索引并行发起：rawQ 整串命中（exact ≥2）即快路径返回，
+    // 否则收集文本路候选（改写关键词/同义补查）进混合召回
+    let rewrite: RewriteOutput | null = null;
+    const rewriteP = this.rewriteQuery(rawQ);
+    const aRefs: SearchRef[] = [];
+    const bm25Refs: SearchRef[] = [];
+    const kwRefs: SearchRef[] = []; // 改写关键词补查：只扩充 rerank 候选池，不进 RRF 主路
+    let aExact = false;
+    try {
+      const index = await this.ensureTextbookIndex();
+      if (index) {
+        const r0 = searchTextbookIndex(index, rawQ, 6);
+        if (r0 && r0.found) {
+          aRefs.push(...r0.refs);
+          aExact = r0.exact;
+        }
+        // L1.5 BM25 词频路：子串命中无分数，术语密集行靠词频打分补召回，独立进 RRF
+        try {
+          if (!this.bm25Idx) this.bm25Idx = buildBm25Index(index);
+          bm25Refs.push(...bm25Search(index, this.bm25Idx, rawQ, 20).map((r) => r.ref));
+        } catch (e) {
+          console.warn("[edge-tutor] BM25 检索失败，跳过本路", (e as Error).message.slice(0, 100));
+        }
+        if (!aExact) {
+          rewrite = await rewriteP; // 整串未命中才等改写（<0.5s，失败返回 null）
+          if (rewrite) {
+            // 关键词补查进候选池而非 RRF：宽泛术语（"积分不等式"）常命中讲次总览块，
+            // 与向量路"多路共识"后会把 rawQ 截尾命中的精确行挤出融合前列（实测 9 条行级劣化）
+            for (const q of [...rewrite.keywords, ...rewrite.synonyms]) {
+              const rr = searchTextbookIndex(index, q, 6);
+              if (rr && rr.found) kwRefs.push(...rr.refs);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[edge-tutor] 本地索引检索失败", (e as Error).message.slice(0, 120));
+    }
+
+    // 快路径：整串命中 ≥2 处 → 直接返回（归一化匹配已确认，省向量推理）
+    if (aExact && aRefs.length >= 2) {
+      const top = diverseTop(aRefs, 6, 2);
+      hit = { found: true, text: formatRefsText(top), count: top.length, refs: top };
+      this.logSearchPath("index", Date.now() - t0, true);
+      return this.cacheSearchHit(qKey, hit);
+    }
+
+    // L3 向量召回 + L4 RRF 融合 + L5 条件 rerank（混合语义路径；任一失败静默降级）
+    const chapters = rewrite?.chapters ?? [];
+    // 阶段 2 多路向量：主路 = 原始问题（相似度主排序，与用户表述最匹配）；
+    // 变体 = JSON 理解的 3 个查询（教材语言/概念扩展），只扩充召回不参与排序。
+    // 注意：不能用关键词拼接查询——实测 bge 编码被 30+ 字关键词带偏，
+    // 正确例题行的相似度排名被稀释出 top20（base 纯原问排第 1）。
+    const vecQueries = [rawQ];
+    for (const q of rewrite?.queries ?? []) {
+      if (q && !vecQueries.includes(q)) vecQueries.push(q);
+    }
+    const vecHits = await this.vectorRecall(vecQueries, chapters);
+    // L4 RRF 融合三路：子串（强命中）/ BM25（词频分）/ 向量（语义）
+    const merged = rrfMerge([aRefs, bm25Refs, vecHits]);
+    if (merged.length > 0) {
+      const vecTopScore = vecHits[0]?.score ?? 0;
+      const aTopFile = aRefs[0]?.file;
+      const vecTopFile = vecHits[0]?.file;
+      const agreement = !!aTopFile && !!vecTopFile && aTopFile === vecTopFile;
+      // 条件 rerank：整串未命中 且（向量置信不足 或 两路分歧）→ 交叉编码器重排 top-40；
+      // reranker 不可用 → 直接用融合分排序（RRF 免标定，低分不硬上）
+      const needRerank = !aExact && !(vecTopScore >= RERANK_TRIGGER_SCORE && agreement);
+      let ranked = merged;
+      if (needRerank) {
+        const reranker = await this.loadRerankerForSearch();
+        if (reranker) {
+          // 候选池 = 融合结果 + BM25 强符号命中 + 改写关键词补查（仅低置信时扩充；
+          // 交叉编码器把关：无区分度的宽泛命中被压下去，符号/题号/精确术语命中被抬上来）
+          const pool =
+            bm25Refs.length > 0 || kwRefs.length > 0
+              ? rrfMerge([merged.map((m) => m.ref), bm25Refs, kwRefs])
+              : merged;
+          const top40 = pool.slice(0, 40);
+          try {
+            const scores = await reranker.rerank(rawQ, top40.map((m) => m.ref.text));
+            ranked = top40
+              .map((m, i) => ({ ref: m.ref, score: scores[i] ?? 0 }))
+              .sort((x, y) => y.score - x.score);
+            // 保底注入：reranker 的"最相关段落"配对会把对话追问/变式类的锚点段压出 top10
+            // （评测：78 条生效子集上文件级 98.7%→94.9%、MRR 0.789→0.690），而这两路是
+            // RRF 排序的主体（off-off 基线 99% 就靠它们）——强信号必须保住（阶段 2 kwRefs
+            // 教训同构）。保底对象：aRefs 子串精确命中（≤2）+ 向量路 top2（≤2，去重后 ≤4），
+            // 其余槽位仍按 rerank 排序（精排收益保留在注入内容上）。
+            const keptRefs = aRefs
+              .filter((a) => ranked.some((m) => m.ref.file === a.file && a.startLine >= m.ref.startLine && a.startLine <= m.ref.endLine))
+              .slice(0, 2);
+            const keepSources: SearchRef[] = [...keptRefs, ...vecHits.slice(0, 2)];
+            if (keepSources.length > 0) {
+              // 保底条目 → 其对应的候选块 key（ranked 里的条目是块，aRefs 是行级命中，
+              // 去重必须用块的 key，否则 key 对不上）
+              const keptKeys = new Set<string>();
+              const keptItems: { ref: SearchRef; score: number }[] = [];
+              for (const a of keepSources) {
+                const m = ranked.find((x) => x.ref.file === a.file && a.startLine >= x.ref.startLine && a.startLine <= x.ref.endLine);
+                if (!m) continue;
+                const key = `${m.ref.file}:${m.ref.startLine}`;
+                if (keptKeys.has(key)) continue;
+                keptKeys.add(key);
+                keptItems.push({ ref: m.ref, score: 1.01 });
+              }
+              if (keptItems.length > 0) {
+                ranked = [...keptItems, ...ranked.filter((m) => !keptKeys.has(`${m.ref.file}:${m.ref.startLine}`))];
+              }
+            }
+            console.info(`[edge-tutor] 条件 rerank：${top40.length} 候选 → top${Math.min(ranked.length, 6)}${keptItems.length > 0 ? `（保底 ${keptItems.length} 条子串精确命中）` : ""}`);
+          } catch (e) {
+            // 降级链已在 loadRerankerForSearch 内处理（远程 → 本地 bge → 抛错到这）：
+            // 到此说明全部 reranker 不可用，用融合分排序（RRF 免标定）
+            console.warn("[edge-tutor] rerank 不可用，用融合分排序", String((e as Error)?.message ?? e).slice(0, 150));
+          }
+        }
+      }
+      // 先重排后多样性裁剪：同文件最多 2 条，保证"多点实例"覆盖不同讲次
+      const top = diverseTop(ranked.map((m) => m.ref), 6, 2);
+      hit = { found: true, text: formatRefsText(top), count: top.length, refs: top };
+      this.logSearchPath(aRefs.length > 0 ? "hybrid" : "vector", Date.now() - t0, true);
+      return this.cacheSearchHit(qKey, hit);
+    }
+    console.info(`[edge-tutor] 混合检索无候选（文本路 ${aRefs.length} 处 / 向量 top1=${vecHits[0]?.score.toFixed(3) ?? "-"}），交给 agent`);
+
+    // L2：opencode 语义检索（25s 硬超时；指令含 vault 绝对路径，不依赖 serve 的 cwd）
     if (s.agentChannel === "opencode") {
       try {
         const chapters = await this.getChapterIndex();
@@ -916,42 +1389,50 @@ export default class EdgeTutorPlugin extends Plugin {
           chapters.length > 0
             ? chapters.map((c) => `- ${c.file}：${c.title}`).join("\n")
             : "（无法读取章节地图，请自行浏览目录）";
+        const absRoot = this.textbookRootAbs();
+        const chapterHint =
+          rewrite && rewrite.chapters.length > 0 ? `优先检查以下讲次：${rewrite.chapters.join("、")}。` : "";
         const instruction = [
-          `在教材目录 "${root}" 下查找与「${rawQ}」最相关的教材原文，定位到具体的行。`,
+          `在教材目录 "${absRoot}"（绝对路径，可直接 read/grep）下查找与「${rawQ}」最相关的教材原文，定位到具体的行。`,
           "",
           "【章节地图】（教材讲次结构，用于判断去哪里找）",
           chapterMap,
           "",
           "要求：",
-          "1. 先根据章节地图判断最相关的 1-2 个讲次 → 用 read/grep 在该文件中定位原文。",
+          `1. ${chapterHint}先根据章节地图判断最相关的 1-2 个讲次 → 用 read/grep 在该文件中定位原文。`,
           "2. 若目标讲次中没有，再检查相邻讲次；仍找不到就只输出：未找到",
           "3. 输出格式（严格遵守，只输出 1-3 处，每处一个块）：",
-          "【文件】vault 相对路径（不含行号）",
+          "【文件】vault 相对路径（相对 vault 根，不是绝对路径，不含行号），形如 learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md",
           "【行号】起行-止行",
           "【原文】该区间原文，150-300 字，保留原表述",
         ].join("\n");
         const result = await runOpenCodeTask(
           {
             base: s.opencodeBase || "http://127.0.0.1:10999",
-            provider: s.opencodeProvider || "deepseek",
+            provider: s.opencodeProvider || "opencode-go",
             model: s.opencodeModel || "deepseek-v4-flash",
           } as OpenCodeConfig,
           instruction,
-          { maxWaitMs: 50_000 }
+          { maxWaitMs: 25_000 }
         );
         hit = parseSearchResult(result.answer);
+        this.logSearchPath("opencode", Date.now() - t0, hit.found);
       } catch (e) {
         console.warn("[edge-tutor] opencode 检索失败，降级 grep", (e as Error).message.slice(0, 120));
         hit = { found: false, text: "", count: 0, refs: [] };
       }
     }
 
-    // 2. 降级/兜底：本地 grep（文本定位）
+    // L3：降级/兜底：本地 grep（文本定位）
     if (!hit.found) {
       hit = await this.searchTextbookLocal(rawQ, root);
+      this.logSearchPath("grep", Date.now() - t0, hit.found);
     }
+    return this.cacheSearchHit(qKey, hit);
+  }
 
-    // 缓存（无论是否命中，防重复检索）
+  /** 写检索缓存（无论是否命中，防重复检索）并返回 */
+  private cacheSearchHit(qKey: string, hit: SearchHit): SearchHit {
     if (qKey) {
       if (this.searchCache.size >= 10) {
         const oldest = this.searchCache.keys().next().value;
@@ -962,15 +1443,311 @@ export default class EdgeTutorPlugin extends Plugin {
     return hit;
   }
 
+  // ===== 向量检索（transformers.js 本地 embedding；懒构建 + 落盘；失败即禁用） =====
+
+  /** 教材向量索引统计（注入 prompt 用；索引未加载/不可用 → null） */
+  get textbookIndexStats(): { files: number; chunks: number } | null {
+    if (!this.vecIndex || this.vecIndex.chunks.length === 0) return null;
+    const files = new Set(this.vecIndex.chunks.map((c) => c.file)).size;
+    return { files, chunks: this.vecIndex.chunks.length };
+  }
+
+  /** 插件数据目录（vault 外绝对路径；模型缓存/向量索引落盘处） */
+  private vecPluginDir(): string {
+    const base = this.app.vault.adapter instanceof FileSystemAdapter ? this.app.vault.adapter.getBasePath() : "";
+    return `${base}/.obsidian/plugins/edge-tutor`.replace(/\\/g, "/");
+  }
+
+  /**
+   * 向量索引文件（绝对路径，按教材 root 分文件：search-vectors-<sha256(root) 前 12 位>.json）。
+   * 多教材各自持久，切换教材秒级加载、互不覆盖；旧版单文件 search-vectors.json
+   * 由 migrateLegacyVectorIndex 一次性 rename 迁移。
+   * 注意不能用 vault.adapter.read/write——adapter 只认 vault 相对路径，传绝对路径会被
+   * basePath 再拼一次（vault 根重复）。models/（模型缓存）同理在 vault 外，统一走 fs。
+   */
+  private vectorIndexPath(root: string): string {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require("crypto");
+    const h = crypto.createHash("sha256").update(root).digest("hex").slice(0, 12);
+    return `${this.vecPluginDir()}/search-vectors-${h}.json`;
+  }
+
+  /** 旧版单文件索引路径（迁移源） */
+  private legacyVectorIndexPath(): string {
+    return `${this.vecPluginDir()}/search-vectors.json`;
+  }
+
+  /** 旧版单文件索引 → 分文件迁移：新路径不存在且旧文件 root 匹配 → rename（保住已建索引，免重建） */
+  private async migrateLegacyVectorIndex(root: string): Promise<void> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fs = require("fs");
+      const legacy = this.legacyVectorIndexPath();
+      if (!fs.existsSync(legacy) || fs.existsSync(this.vectorIndexPath(root))) return;
+      const f = JSON.parse(fs.readFileSync(legacy, "utf8")) as VectorIndexFile;
+      if (f.root !== root) return;
+      fs.renameSync(legacy, this.vectorIndexPath(root));
+      console.info("[edge-tutor] 旧版向量索引已迁移", legacy, "→", this.vectorIndexPath(root));
+    } catch (e) {
+      console.warn("[edge-tutor] 向量索引迁移跳过", (e as Error).message.slice(0, 100));
+    }
+  }
+
+  private async readVectorIndexFile(root: string): Promise<string | null> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fs = require("fs");
+      return fs.readFileSync(this.vectorIndexPath(root), "utf8");
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeVectorIndexFile(root: string, content: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    await fs.promises.writeFile(this.vectorIndexPath(root), content);
+  }
+
+  private vectorModelsDir(): string {
+    return `${this.vecPluginDir()}/models`;
+  }
+
+  /** 懒构建/加载向量索引（失败返回 null，向量层静默禁用） */
+  private async ensureVectorIndex(): Promise<VectorIndex | null> {
+    const root = this.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (this.vecIndex && this.vecIndexRoot === root) return this.vecIndex;
+    if (this.vecBuilding) return null; // 构建中不并发
+    // 先解析实际可用的 embedder（含远程冒烟），模型 id 以实际生效者为准——
+    // 远程配置但不可用时会降级本地，索引校验/落盘必须与真实生成向量的模型一致，
+    // 否则会出现"远程索引 + 本地查询"的维度/空间错配。
+    const active = await this.loadActiveEmbedder();
+    if (!active) {
+      this.updateVectorStatus("🧠 向量：不可用（embedding 模型加载失败）");
+      return null;
+    }
+    const loaded = await this.loadVectorIndexFile(root, active.modelId);
+    if (loaded) {
+      this.vecIndex = loaded;
+      this.vecIndexRoot = root;
+      return loaded;
+    }
+    return this.buildVectorIndex(root, active);
+  }
+
+  private async loadVectorIndexFile(root: string, expectedModelId: string): Promise<VectorIndex | null> {
+    try {
+      await this.migrateLegacyVectorIndex(root); // 旧单文件 → 分文件（一次性，root 匹配才迁）
+      const raw = await this.readVectorIndexFile(root);
+      if (raw === null) return null;
+      const f = JSON.parse(raw) as VectorIndexFile;
+      if (f.version !== 1 || f.root !== root || f.model !== expectedModelId || !Array.isArray(f.chunks)) {
+        return null;
+      }
+      this.updateVectorStatus(`🧠 向量：已加载 ${f.chunks.length} 块（${f.model}）`);
+      return { chunks: f.chunks, vecs: decodeVecs(f.vecsB64, f.dim), model: f.model, root: f.root, dim: f.dim };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * 按设置加载当前生效的 embedder：
+   * - embeddingProvider=dashscope 且 key 有效 → 远程（冒烟 1 条验证，失败自动降级本地）
+   * - 否则 → 本地 bge-small（transformers.js，wasm 随插件分发）
+   * 返回实际 embedder + 其模型 id（降级时是 MODEL_ID，与索引校验/落盘一致）。
+   */
+  private async loadActiveEmbedder(): Promise<{ embedder: Embedder; modelId: string } | null> {
+    if (this.settings.embeddingProvider === "dashscope" && resolveEmbeddingApiKey(this.settings)) {
+      const wantKey = `${this.settings.embeddingApiBase}|${this.settings.embeddingModel || "text-embedding-v4"}|${this.settings.embeddingDim}`;
+      if (!this.remoteEmbedder || this.remoteEmbedderKey !== wantKey) {
+        this.remoteEmbedder = null;
+        try {
+          const remote = loadRemoteEmbedder({
+            apiKey: resolveEmbeddingApiKey(this.settings),
+            baseUrl: this.settings.embeddingApiBase,
+            model: this.settings.embeddingModel || "text-embedding-v4",
+            dim: this.settings.embeddingDim,
+          });
+          // 冒烟验证：1 条 query 请求确认 key/端点可用；失败抛错 → 降级本地
+          await remote.embed(["连接测试"], { query: true });
+          this.remoteEmbedder = remote;
+          this.remoteEmbedderKey = wantKey;
+        } catch (e) {
+          console.warn("[edge-tutor] 远程 embedding 不可用，回退本地 bge-small", (e as Error).message.slice(0, 120));
+          this.remoteEmbedder = null;
+        }
+      }
+      if (this.remoteEmbedder) {
+        return { embedder: this.remoteEmbedder, modelId: this.settings.embeddingModel || "text-embedding-v4" };
+      }
+    }
+    const embedder = await loadEmbedder(this.vectorModelsDir(), `${this.vecPluginDir()}/lib`);
+    if (!embedder) return null;
+    return { embedder, modelId: MODEL_ID };
+  }
+
+  private async buildVectorIndex(
+    root: string,
+    active: { embedder: Embedder; modelId: string }
+  ): Promise<VectorIndex | null> {
+    this.vecBuilding = true;
+    try {
+      new Notice("🧠 构建教材向量索引（首次需下载模型，约几分钟，可后台进行，期间不影响使用）…");
+      this.updateVectorStatus("🧠 向量：构建中（首次需下载模型）…");
+      const files = this.app.vault
+        .getMarkdownFiles()
+        .filter((f) => f.path.startsWith(root + "/") && f.name !== "toc.md");
+      const chunks: SearchChunk[] = [];
+      for (const f of files) {
+        try {
+          const text = await this.app.vault.cachedRead(f);
+          chunks.push(...chunkTextbook(text, f.path));
+        } catch (e) {
+          // 单文件失败跳过
+        }
+      }
+      if (chunks.length === 0) {
+        this.updateVectorStatus("🧠 向量：不可用（教材目录无内容）");
+        return null;
+      }
+      const { embedder } = active;
+      const vecs: number[][] = [];
+      const BATCH = 16;
+      const total = chunks.length;
+      for (let i = 0; i < total; i += BATCH) {
+        // 文档侧编码（无 query 标记）；远程模型按批次内部再分 10 条/请求
+        const part = await embedder.embed(chunks.slice(i, i + BATCH).map((c) => c.text));
+        vecs.push(...part);
+        if (i % 160 === 0 || i + BATCH >= total) {
+          const done = Math.min(i + BATCH, total);
+          console.info(`[edge-tutor] 向量索引构建 ${done}/${total}（${active.modelId}）`);
+          this.updateVectorStatus(`🧠 向量：构建中 ${done}/${total}`);
+        }
+      }
+      const index: VectorIndex = { chunks, vecs, model: active.modelId, root, dim: vecs[0]?.length ?? 0 };
+      try {
+        const payload: VectorIndexFile = {
+          version: 1,
+          root,
+          model: index.model,
+          chunks,
+          vecsB64: encodeVecs(vecs),
+          dim: index.dim,
+        };
+        await this.writeVectorIndexFile(root, JSON.stringify(payload));
+      } catch (e) {
+        console.warn("[edge-tutor] 向量索引落盘失败", (e as Error).message.slice(0, 100));
+      }
+      this.vecIndex = index;
+      this.vecIndexRoot = root;
+      this.updateVectorStatus(`🧠 向量：就绪 ${chunks.length} 块`);
+      new Notice(`🧠 教材向量索引完成：${chunks.length} 块`);
+      return index;
+    } catch (e) {
+      this.updateVectorStatus("🧠 向量：不可用（构建失败，详见 Console）");
+      console.warn("[edge-tutor] 向量索引构建失败，向量检索禁用", (e as Error).message.slice(0, 120));
+      return null;
+    } finally {
+      this.vecBuilding = false;
+    }
+  }
+
+  /**
+   * 向量召回 top-k（可选章节 scope；多查询变体只做召回扩充）。
+   * 排序 = 原始查询（qs[0]，关键词增强原问）的相似度降序——它与用户问题最匹配；
+   * 变体查询（教材语言/概念扩展）的 top-20 中不在主路里的块按相似度附加在尾部（扩充候选池，
+   * 供 rerank 交叉编码器把关）。实测 max-score 合并与 RRF 融合都会让语义扩展变体的
+   * "总览块幻觉"（讲次开头）挤掉原始例题查询的精确命中——变体只扩充、不参与排序。
+   * 单查询时行为与旧版完全一致；任何失败返回空数组，调用方静默跳过。
+   */
+  private async vectorRecall(queries: string[], chapters: string[]): Promise<VectorHit[]> {
+    const t0 = Date.now();
+    try {
+      const index = await this.ensureVectorIndex();
+      if (!index || index.vecs.length === 0) return [];
+      const active = await this.loadActiveEmbedder();
+      if (!active) return [];
+      const qs = [...new Set(queries.map((q) => q.trim()).filter(Boolean))];
+      if (qs.length === 0) return [];
+      // query 侧编码（query 标记 → 本地拼 BGE 前缀 / 远程加 text_type=query+instruct；批量一次调用）
+      const qvs = await active.embedder.embed(qs, { query: true });
+      const scopeFilter = (ranked: { idx: number; score: number }[]) => {
+        if (chapters.length === 0) return ranked;
+        const scoped = ranked.filter((c) => chapters.some((ch) => index.chunks[c.idx].file.includes(ch)));
+        return scoped.length > 0 ? scoped : ranked; // 过滤后非空才替换
+      };
+      const hit = (c: { idx: number; score: number }): VectorHit => {
+        const ch = index.chunks[c.idx];
+        return { file: ch.file, startLine: ch.startLine, endLine: ch.endLine, text: ch.text, score: c.score };
+      };
+      const hits: VectorHit[] = [];
+      const seen = new Set<string>();
+      for (let i = 0; i < qvs.length; i++) {
+        const qv = qvs[i];
+        if (!qv || qv.length === 0) continue;
+        const ranked = scopeFilter(topKVectors(qv, index.vecs, 20)).slice(0, 20);
+        for (const c of ranked) {
+          const key = `${index.chunks[c.idx].file}:${index.chunks[c.idx].startLine}`;
+          if (seen.has(key)) continue; // 主路优先，变体路去重
+          seen.add(key);
+          hits.push(hit(c));
+        }
+        if (hits.length >= 20) break; // 已满 20 停止后续变体路
+      }
+      const top = hits.slice(0, 20);
+      console.info(`[edge-tutor] 向量召回 ${Date.now() - t0}ms ${qs.length}路 top=${top.length}`);
+      return top;
+    } catch (e) {
+      console.warn("[edge-tutor] 向量检索失败", (e as Error).message.slice(0, 100));
+      return [];
+    }
+  }
+
+  /**
+   * 检索 reranker 解析（降级链：远程 qwen3-rerank → 本地 bge-reranker → null=融合分排序）。
+   * rerankProvider=dashscope 且有 key（复用 embeddingApiKey，环境变量优先）→ 远程 API；
+   * 远程调用失败时包装层降级本地 bge（已缓存则即时）。默认 local 零行为变化。
+   */
+  private async loadRerankerForSearch(): Promise<Reranker | null> {
+    const s = this.settings;
+    const key = resolveEmbeddingApiKey(s).trim();
+    if (s.rerankProvider === "dashscope" && key) {
+      try {
+        const baseUrl = s.rerankApiBase || DEFAULT_SETTINGS.rerankApiBase;
+        const model = s.rerankModel || DEFAULT_SETTINGS.rerankModel;
+        const remote = loadRemoteReranker({ apiKey: key, baseUrl, model });
+        console.info(`[edge-tutor] rerank 来源：远程 ${model}（${baseUrl}）`);
+        return {
+          rerank: async (query, texts) => {
+            try {
+              return await remote.rerank(query, texts);
+            } catch (e) {
+              // 远程失败（网络/key/额度）→ 降级本地 bge-reranker；本地也失败则抛错
+              // 给调用方 → 融合分排序
+              console.warn("[edge-tutor] 远程 rerank 失败，降级本地 bge-reranker", String((e as Error)?.message ?? e).slice(0, 150));
+              const local = await loadReranker(this.vectorModelsDir(), `${this.vecPluginDir()}/lib`);
+              if (!local) throw e;
+              return local.rerank(query, texts);
+            }
+          },
+        };
+      } catch (e) {
+        console.warn("[edge-tutor] 远程 reranker 装配失败，降级本地 bge-reranker", String((e as Error)?.message ?? e).slice(0, 150));
+      }
+    }
+    return loadReranker(this.vectorModelsDir(), `${this.vecPluginDir()}/lib`);
+  }
+
   /** 插件内 grep 检索（降级兜底）：遍历教材 md，关键词命中返回上下文片段 */
   private async searchTextbookLocal(query: string, root: string): Promise<SearchHit> {
-    const q = normalizeQuery(query).toLowerCase();
+    const q = normalizeTextForMatch(query);
     const hits: SearchRef[] = [];
     const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(root + "/") || f.path === root);
     for (const f of files) {
       if (hits.length >= 3) break;
       const text = await this.app.vault.cachedRead(f);
-      const lower = text.toLowerCase();
+      const lower = normalizeTextForMatch(text);
       if (!q || !lower.includes(q)) continue;
       const lines = text.split("\n");
       const idx = lower.indexOf(q);
@@ -992,6 +1769,8 @@ export default class EdgeTutorPlugin extends Plugin {
 /** 设置页 */
 class EdgeTutorSettingTab extends PluginSettingTab {
   private plugin: EdgeTutorPlugin;
+  /** 教材下拉是否处于"手动输入路径"展开态（display 重绘时保持） */
+  private customRootEditing = false;
 
   constructor(app: App, plugin: EdgeTutorPlugin) {
     super(app, plugin);
@@ -1035,10 +1814,10 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Provider / 模型")
-        .setDesc("opencode 配置中的 provider 与模型 id，如 deepseek / deepseek-v4-flash")
+        .setDesc("opencode 配置中的 provider 与模型 id，如 opencode-go / deepseek-v4-flash")
         .addText((text) =>
-          text.setValue(this.plugin.settings.opencodeProvider || "deepseek").onChange(async (v) => {
-            this.plugin.settings.opencodeProvider = v.trim() || "deepseek";
+          text.setValue(this.plugin.settings.opencodeProvider || "opencode-go").onChange(async (v) => {
+            this.plugin.settings.opencodeProvider = v.trim() || "opencode-go";
             await this.plugin.saveSettings();
           })
         )
@@ -1051,20 +1830,20 @@ class EdgeTutorSettingTab extends PluginSettingTab {
     } else {
       new Setting(containerEl)
         .setName("Agent API 地址")
-        .setDesc("OpenAI 兼容端点（需支持 tool_calls）。")
+        .setDesc("OpenAI 兼容端点（需支持 tool_calls）。默认 opencode-go 网关。")
         .addText((text) =>
-          text.setValue(this.plugin.settings.agentApiBase || "https://api.deepseek.com/v1").onChange(async (v) => {
-            this.plugin.settings.agentApiBase = v.trim() || "https://api.deepseek.com/v1";
+          text.setValue(this.plugin.settings.agentApiBase || "https://opencode.ai/zen/go/v1").onChange(async (v) => {
+            this.plugin.settings.agentApiBase = v.trim() || "https://opencode.ai/zen/go/v1";
             await this.plugin.saveSettings();
           })
         );
 
       new Setting(containerEl)
         .setName("Agent API Key 环境变量名")
-        .setDesc("从环境变量读取密钥（优先于下面明文）。")
+        .setDesc("从环境变量读取密钥（优先于下面明文）。opencode-go 网关 key。")
         .addText((text) =>
-          text.setValue(this.plugin.settings.agentApiKeyEnv || "DEEPSEEK_API_KEY").onChange(async (v) => {
-            this.plugin.settings.agentApiKeyEnv = v.trim() || "DEEPSEEK_API_KEY";
+          text.setValue(this.plugin.settings.agentApiKeyEnv || "OPENCODE_GO_API_KEY").onChange(async (v) => {
+            this.plugin.settings.agentApiKeyEnv = v.trim() || "OPENCODE_GO_API_KEY";
             await this.plugin.saveSettings();
           })
         );
@@ -1084,10 +1863,10 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Agent 模型")
-        .setDesc("支持 function calling 的模型（默认 deepseek-chat）。")
+        .setDesc("支持 function calling 的模型（默认 opencode-go 网关的 deepseek-v4-flash）。")
         .addText((text) =>
-          text.setValue(this.plugin.settings.agentModel || "deepseek-chat").onChange(async (v) => {
-            this.plugin.settings.agentModel = v.trim() || "deepseek-chat";
+          text.setValue(this.plugin.settings.agentModel || "deepseek-v4-flash").onChange(async (v) => {
+            this.plugin.settings.agentModel = v.trim() || "deepseek-v4-flash";
             await this.plugin.saveSettings();
           })
         );
@@ -1209,12 +1988,167 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("教材根目录")
-      .setDesc("教材 md 所在目录（用于锚点定位）")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.textbookRoot).onChange(async (v) => {
-          this.plugin.settings.textbookRoot = v;
-          await this.plugin.saveSettings();
-        })
+      .setDesc("多教材支持：下拉从 books.yaml 注册表读取，切换后检索/锚点/索引自动跟随。选“✏️ 手动输入路径…”可填任意自定义路径（不写回注册表）。")
+      .addDropdown((dropdown) => {
+        const current = this.plugin.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+        const known = new Set<string>();
+        for (const b of this.plugin.textbookRegistry) {
+          if (!b.root) continue;
+          known.add(b.root);
+          dropdown.addOption(b.root, b.name);
+        }
+        if (current && !known.has(current)) {
+          dropdown.addOption(current, `📌 当前路径（未注册）：${current.slice(-40)}`);
+        }
+        dropdown.addOption(CUSTOM_ROOT, "✏️ 手动输入路径…");
+        dropdown.setValue(known.has(current) ? current : current || CUSTOM_ROOT);
+        dropdown.onChange(async (v) => {
+          if (v === CUSTOM_ROOT) {
+            this.customRootEditing = true;
+            this.display(); // 展开手动输入框
+            return;
+          }
+          this.customRootEditing = false;
+          await this.plugin.setTextbookRoot(v);
+        });
+      });
+    if (this.customRootEditing) {
+      new Setting(containerEl)
+        .setName("自定义教材根目录")
+        .setDesc("vault 内相对路径（不会写回 books.yaml 注册表）")
+        .addText((text) =>
+          text.setValue(this.plugin.settings.textbookRoot).onChange(async (v) => {
+            if (v.trim()) await this.plugin.setTextbookRoot(v);
+          })
+        );
+    }
+    // 注册表首读兜底：onload 预热可能未完成/失败，设置页打开时补读一次后重绘下拉
+    if (this.plugin.textbookRegistry.length === 0) {
+      void this.plugin.refreshTextbookRegistry().then(() => {
+        if (this.plugin.textbookRegistry.length > 0) this.display();
+      });
+    }
+
+    containerEl.createEl("h3", { text: "🔍 教材向量检索（embedding）" });
+    new Setting(containerEl)
+      .setName("向量模型来源")
+      .setDesc("本地 bge-small-zh（默认，离线可用）；阿里百炼 text-embedding-v4（中文检索最强档，API 批处理构建更快，教材内容将发送至阿里云；新用户 100 万 tokens 免费额度内即可完成全量构建）。")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("local", "本地 bge-small-zh（离线）")
+          .addOption("dashscope", "阿里百炼 text-embedding-v4（推荐）")
+          .setValue(this.plugin.settings.embeddingProvider)
+          .onChange(async (v) => {
+            this.plugin.settings.embeddingProvider = v as "local" | "dashscope";
+            await this.plugin.saveSettings();
+            this.display(); // 刷新设置页（远程配置项随开关显隐）
+          })
       );
+
+    if (this.plugin.settings.embeddingProvider === "dashscope") {
+      new Setting(containerEl)
+        .setName("Embedding API Key")
+        .setDesc("阿里云百炼密钥（留空自动回退本地 bge-small；环境变量 EDGE_TUTOR_EMBEDDING_API_KEY 优先）。")
+        .addText((text) => {
+          text.setValue(this.plugin.settings.embeddingApiKey);
+          text.inputEl.type = "password";
+          text.onChange(async (v) => {
+            this.plugin.settings.embeddingApiKey = v.trim();
+            await this.plugin.saveSettings();
+          });
+        });
+
+      new Setting(containerEl)
+        .setName("API 地址（base URL）")
+        .setDesc("OpenAI 兼容端点（不含 /embeddings）。默认阿里官方公共域名；专属工作区填 https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1")
+        .addText((text) =>
+          text.setValue(this.plugin.settings.embeddingApiBase).onChange(async (v) => {
+            this.plugin.settings.embeddingApiBase = v.trim();
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(containerEl)
+        .setName("模型")
+        .setDesc("text-embedding-v4（最新，Qwen3-Embedding 系列）/ text-embedding-v3。切换后索引自动失效，下次检索时重建。")
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("text-embedding-v4", "text-embedding-v4（推荐）")
+            .addOption("text-embedding-v3", "text-embedding-v3")
+            .setValue(this.plugin.settings.embeddingModel)
+            .onChange(async (v) => {
+              this.plugin.settings.embeddingModel = v;
+              await this.plugin.saveSettings();
+            })
+        );
+
+      new Setting(containerEl)
+        .setName("向量维度")
+        .setDesc("text-embedding-v4 支持 2048/1536/1024/768/512/256/128/64；维度越高存储越大，1024 为质量/体积平衡推荐值。")
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("2048", "2048")
+            .addOption("1536", "1536")
+            .addOption("1024", "1024（推荐）")
+            .addOption("768", "768")
+            .addOption("512", "512")
+            .setValue(String(this.plugin.settings.embeddingDim))
+            .onChange(async (v) => {
+              this.plugin.settings.embeddingDim = parseInt(v, 10);
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    containerEl.createEl("h3", { text: "🎯 检索重排（rerank）" });
+    new Setting(containerEl)
+      .setName("重排模型来源")
+      .setDesc("本地 bge-reranker-v2-m3（默认，离线可用）；阿里百炼 qwen3-rerank（Qwen3-Reranker-8B，重排质量最高档，教材段落将发送至阿里云，¥0.5/百万 tokens，每次提问仅对 top-40 候选打分，用量极小）。")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("local", "本地 bge-reranker（离线）")
+          .addOption("dashscope", "阿里百炼 qwen3-rerank（推荐）")
+          .setValue(this.plugin.settings.rerankProvider)
+          .onChange(async (v) => {
+            this.plugin.settings.rerankProvider = v as "local" | "dashscope";
+            await this.plugin.saveSettings();
+            this.display(); // 刷新设置页（远程配置项随开关显隐）
+          })
+      );
+
+    if (this.plugin.settings.rerankProvider === "dashscope") {
+      new Setting(containerEl)
+        .setName("API 地址（base URL）")
+        .setDesc("OpenAI 兼容端点（不含 /reranks；注意是 compatible-api 路径，与 embedding 的 compatible-mode 不同）。默认阿里官方公共域名；专属工作区填 https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-api/v1")
+        .addText((text) =>
+          text.setValue(this.plugin.settings.rerankApiBase).onChange(async (v) => {
+            this.plugin.settings.rerankApiBase = v.trim();
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(containerEl)
+        .setName("模型")
+        .setDesc("qwen3-rerank（Qwen3-Reranker-8B，OpenAI 兼容 reranks 端点）。")
+        .addText((text) =>
+          text.setValue(this.plugin.settings.rerankModel).onChange(async (v) => {
+            this.plugin.settings.rerankModel = v.trim();
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(containerEl)
+        .setName("API Key")
+        .setDesc("复用上方 Embedding API Key（同一百炼账号；环境变量 EDGE_TUTOR_EMBEDDING_API_KEY 优先）。")
+        .addText((text) => {
+          text.setValue(this.plugin.settings.embeddingApiKey);
+          text.inputEl.type = "password";
+          text.setPlaceholder("复用 Embedding API Key，无需重复填写");
+          text.onChange(async (v) => {
+            this.plugin.settings.embeddingApiKey = v.trim();
+            await this.plugin.saveSettings();
+          });
+        });
+    }
   }
 }

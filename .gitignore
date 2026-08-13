@@ -1,13 +1,21 @@
 # 本地配置与密钥——绝不提交
 data.json
+data.json.bak*
+search-vectors-*.json
 
 # 构建与依赖
 node_modules/
 *.log
 
+# 本地模型（体积大，可选——缺失时降级远程/RRF）
+models/
+
+# 临时
+tmp/
+
 # 系统
 .DS_Store
 Thumbs.db
 
-# ���Թ�������
+# 测试构建产物
 test/.build/

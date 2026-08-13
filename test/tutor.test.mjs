@@ -2,16 +2,52 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeNodeTitle, buildNodeContent, parseNodeFromContent, extractMentorResponse } from "./.build/tutor.cjs";
 
-test("makeNodeTitle：去问句前缀与标点", () => {
-  assert.equal(makeNodeTitle("为什么这里要构造辅助函数？"), "这里要构造辅助函数");
-  assert.equal(makeNodeTitle("如何求极限"), "求极限");
-  assert.equal(makeNodeTitle("什么是隐函数"), "隐函数");
-  assert.ok(makeNodeTitle("？？？").startsWith("认知节点"));
+test("makeNodeTitle：保留问题原文（只清非法文件名字符，不剥疑问词）", () => {
+  assert.equal(makeNodeTitle("为什么这里要构造辅助函数？"), "为什么这里要构造辅助函数？");
+  assert.equal(makeNodeTitle("如何求极限"), "如何求极限");
+  assert.equal(makeNodeTitle("什么是隐函数"), "什么是隐函数");
+  // Windows 非法文件名字符替换为空格
+  assert.equal(makeNodeTitle('A/B:C*D?E"F<G>H|I'), "A B C D E F G H I");
+  // 全角标点原样保留（合法文件名字符）
+  assert.equal(makeNodeTitle("隐函数求导：链式法则，还是微分形式？"), "隐函数求导：链式法则，还是微分形式？");
+  // 首尾点/空白清除
+  assert.equal(makeNodeTitle("  问题。  "), "问题。");
+  assert.equal(makeNodeTitle("问题."), "问题");
+  // 全角问号是合法文件名字符，原样保留
+  assert.equal(makeNodeTitle("？？？"), "？？？");
+  // 清洗后为空（纯非法字符/纯空白）→ fallback
+  assert.ok(makeNodeTitle("///").startsWith("认知节点"));
+  assert.ok(makeNodeTitle("   ").startsWith("认知节点"));
 });
 
-test("makeNodeTitle：长度截断", () => {
+test("makeNodeTitle：长度上限 50", () => {
   const long = makeNodeTitle("这是一个非常非常非常非常非常非常非常非常非常非常非常非常长的提问啊");
-  assert.ok(long.length <= 28);
+  assert.ok(long.length <= 50);
+});
+
+test("buildNodeContent：response 完整回答入导师回应区，frontmatter summary 仍截断", () => {
+  const md = buildNodeContent({
+    title: "T",
+    content: "",
+    anchor: { sourcePath: "", quote: "" },
+    status: "active",
+    rootQuestion: "问题原文",
+    summary: "截断摘要",
+    response: "完整回答正文……",
+  });
+  assert.ok(md.includes("完整回答正文……"));
+  assert.ok(md.includes("问题原文"));
+  const parsed = parseNodeFromContent("T", md, "x.md");
+  assert.ok(parsed.summary.includes("截断摘要"));
+  // 无 response 时回落到 summary
+  const md2 = buildNodeContent({ title: "T", content: "", anchor: { sourcePath: "", quote: "" }, status: "active", summary: "只有摘要" });
+  assert.ok(md2.includes("只有摘要"));
+});
+
+test("parseNodeFromContent：追问区占位符不算真实问题", () => {
+  const md = buildNodeContent({ title: "T", content: "", anchor: { sourcePath: "", quote: "" }, status: "active" });
+  const parsed = parseNodeFromContent("T", md, "x.md");
+  assert.equal(parsed.rootQuestion, undefined);
 });
 
 test("buildNodeContent → parseNodeFromContent roundtrip：全字段", () => {
@@ -67,6 +103,25 @@ test("buildNodeContent：frontmatter 可被正则解析", () => {
   // quote 中引号被截断，但结构保持
   assert.ok(md.includes('anchor: "'));
   assert.ok(md.includes("# T"));
+});
+
+test("extractMentorResponse：回答内部 --- 分隔线不截断", () => {
+  const content = [
+    "---", "type: 认知节点", "status: active", "---", "",
+    "# 标题", "",
+    "## 💡 导师回应", "",
+    "第一段。", "",
+    "---", "",
+    "第二段，在 --- 分隔线之后。", "",
+    "---", "",
+    "第三段。", "",
+    "## 🔗 原理链", "",
+    "- 父节点：（无）", "",
+  ].join("\n");
+  const full = extractMentorResponse(content);
+  assert.ok(full.includes("第二段，在 --- 分隔线之后"));
+  assert.ok(full.includes("第三段"));
+  assert.ok(!full.includes("原理链"));
 });
 
 test("extractMentorResponse：正文内部 Markdown 标题不截断", () => {

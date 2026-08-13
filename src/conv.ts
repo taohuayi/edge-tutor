@@ -7,7 +7,7 @@
  *   - 消息带 lineId（归属线程），支持按视图过滤
  */
 
-import { CognitiveNode, ParkedQuestion, extractMentorResponse } from "./tutor";
+import { CognitiveNode, ParkedQuestion, extractMentorResponse, makeNodeTitle } from "./tutor";
 
 /** 会话消息（Zotero: messages[]，带 lineId 归属线程） */
 export interface ConvMessage {
@@ -40,6 +40,8 @@ export interface ConvThread {
   lastQuestion?: string;
   /** 掌握深度：已掌握 / 进行中 / 刚接触（用于方向导引跳过已掌握的） */
   mastery?: "mastered" | "exploring" | "fresh";
+  /** 本线程沉淀的节点文件路径（幂等键：重复沉淀/重新生成时原位更新，不按标题查重） */
+  nodeFile?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,7 +78,7 @@ export function freshConv(workspace: string): Conv {
 export function serializeConv(conv: Conv): string {
   return JSON.stringify(
     {
-      version: 4,
+      version: 5,
       kind: "edge-tutor-conv",
       workspace: conv.workspace,
       messages: conv.messages,
@@ -280,15 +282,31 @@ export function removeMessage(conv: Conv, msg: ConvMessage): boolean {
  * 从节点列表构建会话（纯函数）：
  * 节点 .md 是单一数据源，会话为空时（清屏/迁移）用它恢复线程树与消息。
  * 节点按传入顺序编号 q1..qN；parentTitle 映射为 parentId；无 rootQuestion 的节点仍生成一条 user 消息（用标题）。
+ *
+ * parentTitle 三级匹配（防清屏断链，父结点被改名/agent 命名/旧数据原文引用时都能接上）：
+ *   ① 精确：文件 basename（现行逻辑，覆盖绝大多数）
+ *   ② 清洗：makeNodeTitle(n.rootQuestion || n.title) —— 覆盖父结点被 ✏️ 改名 / agent 命名
+ *   ③ 原文：n.rootQuestion === parentTitle —— 兼容旧数据（旧 parentTitle 存的是父线程原始问题）
+ * 全部失败才作根。
  */
 export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): Conv {
   const conv = freshConv(workspace);
   const idByTitle = new Map<string, string>();
-  nodes.forEach((n, i) => idByTitle.set(n.title, "q" + (i + 1)));
+  const idByCleaned = new Map<string, string>();
+  const idByRootQuestion = new Map<string, string>();
+  nodes.forEach((n, i) => {
+    const id = "q" + (i + 1);
+    idByTitle.set(n.title, id);
+    const cleaned = makeNodeTitle(n.rootQuestion || n.title);
+    if (cleaned && !idByCleaned.has(cleaned)) idByCleaned.set(cleaned, id);
+    if (n.rootQuestion && !idByRootQuestion.has(n.rootQuestion)) idByRootQuestion.set(n.rootQuestion, id);
+  });
 
   for (const n of nodes) {
     const id = idByTitle.get(n.title)!;
-    const parentId = n.parentTitle ? idByTitle.get(n.parentTitle) ?? null : null;
+    const parentId = n.parentTitle
+      ? (idByTitle.get(n.parentTitle) ?? idByCleaned.get(n.parentTitle) ?? idByRootQuestion.get(n.parentTitle) ?? null)
+      : null;
     const thread = addThread(conv, {
       question: n.rootQuestion || n.title,
       parentId,
@@ -300,6 +318,7 @@ export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): C
     thread.rootQuestion = n.rootQuestion || n.title;
     thread.summary = n.summary || "";
     thread.status = n.status;
+    thread.nodeFile = n.filePath;
     // 封顶标记持久化在节点 frontmatter → 重建时恢复
     if (n.locked) thread.mastery = "mastered";
     pushMessage(conv, "user", n.rootQuestion || n.title, { lineId: id });
@@ -309,6 +328,29 @@ export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): C
   }
   conv.reading.activeId = conv.reading.threads[0]?.id ?? null;
   return conv;
+}
+
+/**
+ * 解析子节点的 parentTitle（write 侧，沉淀时用）。
+ * 候选按优先级：① 父线程已沉淀文件的 basename（最精确）→ ② 父线程当前标题（改名场景）
+ * → ③ 规范清洗标题 makeNodeTitle(父 rootQuestion)（确定性，父结点未沉淀时未来可被接上）。
+ * 返回命中"当前工作区已有节点文件标题"集合的第一个候选；全不命中默认返回 ③ 规范值。
+ */
+export function resolveParentTitle(
+  parent: ConvThread | null | undefined,
+  existingTitles: ReadonlySet<string>
+): string | undefined {
+  if (!parent) return undefined;
+  const normalized = makeNodeTitle(parent.rootQuestion || parent.title);
+  const candidates: (string | undefined)[] = [
+    parent.nodeFile ? parent.nodeFile.split("/").pop()!.replace(/\.md$/, "") : undefined,
+    parent.title,
+    normalized,
+  ];
+  for (const c of candidates) {
+    if (c && existingTitles.has(c)) return c;
+  }
+  return normalized || undefined;
 }
 
 /** 回答收尾（Zotero finishAnswer）：更新线程理解沉淀 + 最近追问 */
@@ -440,11 +482,11 @@ export function responseInstruction(isFollowup: boolean): string {
     : base + " 这是一个新分支；只把提供的祖先链当作定位参考。";
 }
 
-/** 分支语境 + 回复指令（合体，供 respond 注入 AI 用户消息） */
-export function branchInstruction(conv: Conv, isFollowup: boolean): string {
+/** 分支语境 + 回复指令（合体，供 respond 注入 AI 用户消息）。branchId 缺省取当前活跃线程（重新生成时传被重生成的线程）。 */
+export function branchInstruction(conv: Conv, isFollowup: boolean, branchId?: string | null): string {
   const parts: string[] = [];
   parts.push("---\n" + responseInstruction(isFollowup));
-  const ctx = branchContext(conv, conv.reading.activeId);
+  const ctx = branchContext(conv, branchId ?? conv.reading.activeId);
   if (ctx) parts.push("[思维树祖先链（仅作定位，请待在活跃分支内）]\n" + ctx);
   return parts.join("\n\n");
 }

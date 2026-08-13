@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   freshConv, addThread, pushMessage, serializeConv, parseConv,
   messagesForView, ancestry, buildConvFromNodes, cognitiveMapSummary, removeMessage,
+  resolveParentTitle,
 } from "./.build/conv.cjs";
 
 test("freshConv：空会话结构", () => {
@@ -178,6 +179,66 @@ test("buildConvFromNodes：locked 节点恢复 mastery 封顶", () => {
   assert.equal(lockedT.mastery, "mastered");
   const normal = conv.reading.threads.find((t) => t.title === "普通链");
   assert.equal(normal.mastery, undefined);
+});
+
+test("buildConvFromNodes：三级父匹配（改名父/旧数据原文引用）", () => {
+  // ③ 级需要 rootQuestion 长于 50 字（makeNodeTitle 截断 → ② 级清洗名不匹配，只能靠 ③ 原文命中）
+  const longQ = "为什么这里需要构造一个辅助函数来把问题转换成可以套用定理的形式呢请问这个问题到底应该怎么理解才好呢请再解释一下";
+  assert.ok(longQ.length > 50);
+  const nodes = [
+    { title: "根", parentTitle: undefined, status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "根问题", summary: "" },
+    // ② 改名父：父文件标题 ≠ rootQuestion 清洗名，子 parentTitle 用清洗名 → ② 级命中
+    { title: "改名后的标题", parentTitle: "根", status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "原始问题A", summary: "" },
+    { title: "改名后的子", parentTitle: "原始问题A", status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "改名后的子", summary: "" },
+    // ③ 旧数据：父标题为旧清洗名，子 parentTitle = 父线程原始长问题原文 → ③ 级命中
+    { title: "隐函数", parentTitle: "根", status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: longQ, summary: "" },
+    { title: "旧数据的子", parentTitle: longQ, status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "旧数据的子", summary: "" },
+  ];
+  const conv = buildConvFromNodes(nodes, "main");
+  const renamedChild = conv.reading.threads.find((t) => t.title === "改名后的子");
+  assert.equal(renamedChild.parentId, conv.reading.threads.find((t) => t.title === "改名后的标题").id);
+  const oldChild = conv.reading.threads.find((t) => t.title === "旧数据的子");
+  assert.equal(oldChild.parentId, conv.reading.threads.find((t) => t.title === "隐函数").id);
+});
+
+test("buildConvFromNodes：nodeFile 从 filePath 恢复（幂等键）", () => {
+  const nodes = [
+    { title: "根", parentTitle: undefined, status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "r", summary: "", filePath: "认知边缘/根.md" },
+    { title: "子", parentTitle: "根", status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "c", summary: "", filePath: "认知边缘/子.md" },
+  ];
+  const conv = buildConvFromNodes(nodes, "main");
+  assert.equal(conv.reading.threads.find((t) => t.title === "根").nodeFile, "认知边缘/根.md");
+  assert.equal(conv.reading.threads.find((t) => t.title === "子").nodeFile, "认知边缘/子.md");
+});
+
+test("resolveParentTitle：查询链（nodeFile → 线程标题 → 规范清洗名）", () => {
+  const set = (xs) => new Set(xs);
+  // ① 父线程已有 nodeFile → 取 basename
+  const p1 = { title: "线程标题", rootQuestion: "原始问题", nodeFile: "认知边缘/已沉淀文件.md" };
+  assert.equal(resolveParentTitle(p1, set(["已沉淀文件"])), "已沉淀文件");
+  // ② 无 nodeFile，线程标题在现有文件中 → 取标题
+  const p2 = { title: "改名后的标题", rootQuestion: "原始问题" };
+  assert.equal(resolveParentTitle(p2, set(["改名后的标题"])), "改名后的标题");
+  // ③ 都不命中 → 规范清洗名（确定性默认）
+  const p3 = { title: "线程标题", rootQuestion: "为什么原始问题" };
+  assert.equal(resolveParentTitle(p3, set(["别的"])), "为什么原始问题");
+  // 无父 → undefined
+  assert.equal(resolveParentTitle(null, set([])), undefined);
+});
+
+test("serializeConv：nodeFile 字段透传 + v4 旧文件兼容", () => {
+  const conv = freshConv("ws");
+  const t = addThread(conv, { question: "q" });
+  t.nodeFile = "认知边缘/文件.md";
+  const parsed = parseConv(serializeConv(conv));
+  assert.equal(parsed.reading.threads[0].nodeFile, "认知边缘/文件.md");
+  // v4 旧文件（无 nodeFile 字段）也能读
+  const v4 = JSON.stringify({
+    version: 4, kind: "edge-tutor-conv", workspace: "ws", messages: [],
+    reading: { mode: "deep", sequence: 1, activeId: null, threads: [{ id: "q1", title: "q", rootQuestion: "q", parentId: null, anchor: null, summary: "", status: "active", createdAt: "", updatedAt: "" }], parkingLot: [] },
+  });
+  const p4 = parseConv(v4);
+  assert.equal(p4.reading.threads[0].nodeFile, undefined);
 });
 
 test("cognitiveMapSummary：缩进树 + 封顶标记 + 摘要", () => {
