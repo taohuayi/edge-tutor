@@ -193,6 +193,20 @@ export function buildGuideEntryBox(
   return box;
 }
 
+/** 面板内 Obsidian 双链点击拦截：交给回调打开（避免面板内导航把面板内容覆盖成笔记） */
+export function attachInternalLinkInterception(container: HTMLElement, onOpen: (path: string) => void): void {
+  for (const a of Array.from(container.querySelectorAll("a.internal-link"))) {
+    a.addEventListener("click", (e) => {
+      const el = a as HTMLAnchorElement;
+      const path = el.dataset.href ? decodeURIComponent(el.dataset.href) : (el.textContent ?? "");
+      if (!path) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onOpen(path);
+    });
+  }
+}
+
 /** 消息 hover 操作条构建（📋 复制 / ✏️ 编辑 / 🔄 重新生成 / 🗑️ 删除） */
 export function buildMsgActBar(
   host: HTMLElement,

@@ -19,7 +19,7 @@ import { buildGuideSystemPrompt, parseGuideResponse, GuideEntry, GuideMode, Cogn
 import { SearchHit } from "./search";
 import { parkQuestion, takeParked, makeNodeTitle, buildNodeContent } from "./tutor";
 import { NoteSuggest } from "./suggest";
-import { splitCommittableParagraphs, attachCitationButtonsDOM, attachCodeCopyButtonsDOM, normalizeMath, buildGuideEntryBox, buildMsgActBar, buildWsTreeData, renderWsTreeNode, renderSearchResultRows } from "./viewlogic";
+import { splitCommittableParagraphs, attachCitationButtonsDOM, attachCodeCopyButtonsDOM, normalizeMath, buildGuideEntryBox, buildMsgActBar, buildWsTreeData, renderWsTreeNode, renderSearchResultRows, attachInternalLinkInterception } from "./viewlogic";
 import { initSelectionFloat } from "./selfloat";
 import { PromptModal, ConfirmModal, ClearModal, ScopeModal } from "./modals";
 import { initMapPanDOM, renderMindMap, MapRenderHost } from "./maprender";
@@ -87,6 +87,8 @@ export class TutorView extends ItemView {
   private plugin: TutorPlugin;
   private conv: Conv = freshConv("main");
   private busy = false;
+  /** 当前回答/指引的中止控制器（点「⏹ 停止」时 abort） */
+  private abortCtl: AbortController | null = null;
   private msgContainer!: HTMLElement;
   private mapContainer!: HTMLElement;
   private mapTitle!: HTMLElement;
@@ -389,6 +391,26 @@ export class TutorView extends ItemView {
     this.chipsEl = container.createEl("div", { cls: "edge-tutor-context-chips" });
     this.chipsEl.style.display = "none";
 
+    // ===== 追问算子快捷行（问题展开范式：点击把追问模板填入输入框） =====
+    const opRow = container.createEl("div", { cls: "edge-tutor-op-row" });
+    const opTemplates: [string, string][] = [
+      ["🔍 为什么", "为什么这里需要这个？它解决什么矛盾？"],
+      ["🚧 边界", "如果把条件去掉/放宽会怎样？失效边界在哪？"],
+      ["⚡ 反例", "能否构造一个反例打破这个结论？"],
+      ["⬆ 一般化", "这是哪个更一般结构的特例？"],
+      ["⬇ 特殊化", "这个规律在什么具体场景会变形/失效？"],
+      ["🔮 下一堵墙", "解决它之后，下一个卡点可能是什么？"],
+    ];
+    for (const [label, tpl] of opTemplates) {
+      const b = opRow.createEl("button", { text: label, cls: "edge-tutor-op-chip", attr: { title: tpl } });
+      b.addEventListener("click", () => {
+        const cur = this.inputEl.value;
+        this.inputEl.value = (cur.trim() ? cur.trimEnd() + "\n" : "") + tpl;
+        this.inputEl.focus();
+        this.scheduleDraftSave();
+      });
+    }
+
     // ===== 输入区 =====
     const inputRow = container.createEl("div", { cls: "edge-tutor-input-row" });
     this.inputRowEl = inputRow;
@@ -397,7 +419,15 @@ export class TutorView extends ItemView {
       attr: { placeholder: "追问或提问…（Enter 发送，Shift+Enter 换行）", rows: "3" },
     });
     this.sendBtn = inputRow.createEl("button", { text: "发送", cls: "edge-tutor-send" });
-    this.sendBtn.addEventListener("click", () => this.sendFromInput());
+    this.sendBtn.addEventListener("click", () => {
+      if (this.busy && this.abortCtl) {
+        // 生成中：点击 = 停止
+        this.abortCtl.abort();
+        this.setStatus("⏹ 正在停止…");
+        return;
+      }
+      void this.sendFromInput();
+    });
 
     this.inputEl.addEventListener("input", () => this.scheduleDraftSave());
     this.inputEl.addEventListener("keydown", (e) => {
@@ -970,8 +1000,10 @@ export class TutorView extends ItemView {
   private async respond() {
     if (this.busy) return;
     this.busy = true;
-    this.sendBtn.setText("思考中…");
-    this.sendBtn.disabled = true;
+    this.abortCtl = new AbortController();
+    this.sendBtn.setText("⏹ 停止");
+    this.sendBtn.disabled = false;
+    this.sendBtn.addClass("edge-tutor-stop");
 
     const sysPrompt = buildSystemPrompt();
     const history: ChatMessage[] = [{ role: "system", content: sysPrompt }];
@@ -1051,10 +1083,7 @@ export class TutorView extends ItemView {
           const div = document.createElement("div");
           div.className = "edge-tutor-md";
           commitContainer.appendChild(div);
-          void MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => {
-            this.attachCitationButtons(div);
-            this.attachCodeCopyButtons(div);
-          });
+          void MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => this.postProcess(div));
         }
       }
       streamTextEl.textContent = rest;
@@ -1066,10 +1095,7 @@ export class TutorView extends ItemView {
         const div = document.createElement("div");
         div.className = "edge-tutor-md";
         commitContainer.appendChild(div);
-        void MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => {
-          this.attachCitationButtons(div);
-          this.attachCodeCopyButtons(div);
-        });
+        void MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => this.postProcess(div));
         pending = "";
         streamTextEl.textContent = "";
       }
@@ -1095,6 +1121,7 @@ export class TutorView extends ItemView {
 
     try {
       const answer = await streamCompletion(this.plugin.settings, history, {
+        signal: this.abortCtl?.signal,
         onDelta: (delta) => {
           streamed += delta;
           pending += delta;
@@ -1136,8 +1163,20 @@ export class TutorView extends ItemView {
       streamingEl.remove();
       this.renderAll();
     } catch (e) {
-      // 失败时保留已流出的部分回答（如果有），并追加错误提示
-      if (streamed) {
+      if (this.abortCtl?.signal.aborted) {
+        // 用户主动停止：保留已流出部分，不显示错误
+        if (streamed) {
+          persistPartial();
+          const partial = getPartial();
+          if (partial) partial.content = streamed + "\n\n⏹ 已停止生成";
+          await this.plugin.saveConv(this.conv);
+          this.renderAll();
+        } else {
+          streamingEl.remove();
+        }
+        this.setStatus("⏹ 已停止生成");
+      } else if (streamed) {
+        // 失败时保留已流出的部分回答（如果有），并追加错误提示
         const errMsg = `\n\n⚠️ 回答中断：${(e as Error).message.slice(0, 120)}`;
         persistPartial();
         const partial = getPartial();
@@ -1152,6 +1191,8 @@ export class TutorView extends ItemView {
       }
     } finally {
       this.busy = false;
+      this.abortCtl = null;
+      this.sendBtn.removeClass("edge-tutor-stop");
       this.sendBtn.setText("发送");
       this.sendBtn.disabled = false;
       if (searchNote) this.setStatus(`回答完成 ${searchNote}`);
@@ -1234,8 +1275,10 @@ export class TutorView extends ItemView {
     const userMsg = this.conv.messages[uIdx];
 
     this.busy = true;
-    this.sendBtn.setText("思考中…");
-    this.sendBtn.disabled = true;
+    this.abortCtl = new AbortController();
+    this.sendBtn.setText("⏹ 停止");
+    this.sendBtn.disabled = false;
+    this.sendBtn.addClass("edge-tutor-stop");
     this.setStatus("🔄 重新生成中…");
 
     // 历史：从开头到该 user 消息（含），分支语境注入
@@ -1271,6 +1314,7 @@ export class TutorView extends ItemView {
 
     try {
       const answer = await streamCompletion(this.plugin.settings, history, {
+        signal: this.abortCtl?.signal,
         onDelta: (delta) => {
           streamed += delta;
           streamTextEl.textContent = streamed;
@@ -1293,7 +1337,14 @@ export class TutorView extends ItemView {
       this.renderAll();
       this.setStatus(`🔄 已重新生成${searchNote ? " " + searchNote : ""}`);
     } catch (e) {
-      if (streamed) {
+      if (this.abortCtl?.signal.aborted) {
+        if (streamed) {
+          target.content = streamed + "\n\n⏹ 已停止生成";
+          await this.plugin.saveConv(this.conv);
+          this.renderAll();
+        }
+        this.setStatus("⏹ 已停止生成");
+      } else if (streamed) {
         target.content = streamed + `\n\n⚠️ 回答中断：${(e as Error).message.slice(0, 120)}`;
         await this.plugin.saveConv(this.conv);
         this.renderAll();
@@ -1304,6 +1355,8 @@ export class TutorView extends ItemView {
       }
     } finally {
       this.busy = false;
+      this.abortCtl = null;
+      this.sendBtn.removeClass("edge-tutor-stop");
       this.sendBtn.setText("发送");
       this.sendBtn.disabled = false;
     }
@@ -1318,6 +1371,10 @@ export class TutorView extends ItemView {
     if (!picked) return;
     const { scope, mode } = picked;
     this.busy = true;
+    this.abortCtl = new AbortController();
+    this.sendBtn.setText("⏹ 停止");
+    this.sendBtn.disabled = false;
+    this.sendBtn.addClass("edge-tutor-stop");
     const active = activeThread(this.conv);
     const scopeLabel = scope === "whole" ? "全书" : "当前位置附近";
     const modeLabel =
@@ -1388,6 +1445,7 @@ export class TutorView extends ItemView {
         },
       ];
       const answer = await streamCompletion(this.plugin.settings, guideMessages, {
+        signal: this.abortCtl?.signal,
         onDelta: (delta) => {
           streamed += delta;
           streamTextEl.textContent = streamed;
@@ -1415,9 +1473,18 @@ export class TutorView extends ItemView {
       }
       await this.plugin.saveConv(this.conv);
     } catch (e) {
-      this.replaceMessage(loadingMsg, { role: "assistant", content: `⚠️ 方向指引失败：${(e as Error).message.slice(0, 150)}` });
+      if (this.abortCtl?.signal.aborted) {
+        this.replaceMessage(loadingMsg, { role: "assistant", content: "⏹ 方向指引已停止。" });
+        this.setStatus("⏹ 已停止指引");
+      } else {
+        this.replaceMessage(loadingMsg, { role: "assistant", content: `⚠️ 方向指引失败：${(e as Error).message.slice(0, 150)}` });
+      }
     } finally {
       this.busy = false;
+      this.abortCtl = null;
+      this.sendBtn.removeClass("edge-tutor-stop");
+      this.sendBtn.setText("发送");
+      this.sendBtn.disabled = false;
     }
   }
 
@@ -1485,6 +1552,41 @@ export class TutorView extends ItemView {
     }
     await this.sedimentThread(active.id);
     new Notice("✅ 认知节点已沉淀");
+  }
+
+  /** 把单条回答沉淀为独立认知节点（v0.11.0；挂在所属线程节点之下，不改线程 nodeFile） */
+  private async sedimentSingleMessage(m: ConvMessage): Promise<void> {
+    const thread = m.lineId ? this.conv.reading.threads.find((t) => t.id === m.lineId) : null;
+    const defaultTitle = makeNodeTitle(thread?.rootQuestion || thread?.title || "沉淀节点");
+    const title = await new PromptModal(this.app, "沉淀这条回答", "节点标题（可改）", defaultTitle).openPrompt();
+    if (title == null) return;
+
+    // 当前工作区已有节点文件标题集合（供 resolveParentTitle 命中真实存在的父文件）
+    const existingTitles = new Set<string>();
+    const dir = this.app.vault.getAbstractFileByPath(this.plugin.workspaceFolder(this.currentWorkspace));
+    if (dir instanceof TFolder) {
+      for (const child of dir.children) {
+        if (!(child instanceof TFile) || !child.name.endsWith(".md")) continue;
+        if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
+        existingTitles.add(child.basename);
+      }
+    }
+
+    const node: CognitiveNodeLike = {
+      title: makeNodeTitle(title),
+      content: "",
+      parentTitle: thread ? resolveParentTitle(thread, existingTitles) : undefined,
+      anchor: { sourcePath: thread?.anchor?.sourcePath ?? m.anchor ?? "", quote: thread?.anchor?.quote ?? "" },
+      status: thread?.status ?? "active",
+      rootQuestion: title,
+      summary: thread?.summary,
+      response: m.content,
+      mastery: thread?.mastery,
+      workspace: this.currentWorkspace,
+    };
+    const f = await this.plugin.createNode(node);
+    new Notice(`✅ 已沉淀节点：${f.basename}`);
+    this.setStatus(`已沉淀「${f.basename}」（独立节点，可在导图/节点目录查看）`);
   }
 
   /** 沉淀全部线程（清屏前兜底）：根在前，保证 parentTitle 解析时父文件已存在 */
@@ -2006,6 +2108,11 @@ export class TutorView extends ItemView {
         };
         modal.open();
       },
+      // 单条回答沉淀（仅普通 AI 回答；导引/执行结果除外）
+      onSediment:
+        m.role === "assistant" && !m.agent && !m.content.trimStart().startsWith("🧭")
+          ? () => void this.sedimentSingleMessage(m)
+          : undefined,
     });
   }
 
@@ -2021,6 +2128,7 @@ export class TutorView extends ItemView {
     onRegenerate?: () => void;
     onEdit?: (el: HTMLElement, content: string) => void;
     onDelete?: () => void;
+    onSediment?: () => void;
   }): HTMLElement {
     const el = this.msgContainer.createEl("div", { cls: `edge-tutor-msg edge-tutor-${opts.role}` });
     if (opts.agent) el.classList.add("edge-tutor-msg-agent");
@@ -2061,8 +2169,7 @@ export class TutorView extends ItemView {
       }
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
       void MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
-        this.attachCitationButtons(mdEl);
-        this.attachCodeCopyButtons(mdEl);
+        this.postProcess(mdEl);
       });
       if (opts.role === "assistant") {
         const ctx = el.createEl("div", { cls: "edge-tutor-msg-ctx" });
@@ -2073,8 +2180,7 @@ export class TutorView extends ItemView {
     } else {
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
       void MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
-        this.attachCitationButtons(mdEl);
-        this.attachCodeCopyButtons(mdEl);
+        this.postProcess(mdEl);
       });
     }
 
@@ -2094,6 +2200,9 @@ export class TutorView extends ItemView {
           },
         },
       ];
+      if (opts.onSediment) {
+        buttons.push({ label: "📝 沉淀", tip: "把这条回答沉淀为独立认知节点", handler: () => opts.onSediment!() });
+      }
       if (opts.onEdit) {
         buttons.push({
           label: "✏️ 编辑", tip: "编辑这条消息",
@@ -2135,6 +2244,13 @@ export class TutorView extends ItemView {
       (msg) => new Notice(msg),
       (e) => console.error("复制代码失败", e),
     );
+  }
+
+  /** Markdown 渲染后处理：引用按钮 + 代码复制 + 面板内双链跳主区（避免面板被笔记覆盖） */
+  private postProcess(mdEl: HTMLElement) {
+    this.attachCitationButtons(mdEl);
+    this.attachCodeCopyButtons(mdEl);
+    attachInternalLinkInterception(mdEl, (path) => void this.app.workspace.openLinkText(path, "", false));
   }
 
   private scrollToBottom() {

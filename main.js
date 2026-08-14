@@ -47257,6 +47257,18 @@ function buildGuideEntryBox(entry, opts) {
   });
   return box;
 }
+function attachInternalLinkInterception(container, onOpen) {
+  for (const a of Array.from(container.querySelectorAll("a.internal-link"))) {
+    a.addEventListener("click", (e) => {
+      const el2 = a;
+      const path3 = el2.dataset.href ? decodeURIComponent(el2.dataset.href) : el2.textContent ?? "";
+      if (!path3) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onOpen(path3);
+    });
+  }
+}
 function buildMsgActBar(host, buttons) {
   const acts = host.createEl("div", { cls: "edge-tutor-msg-acts" });
   for (const btn of buttons) {
@@ -48040,6 +48052,8 @@ var TutorView = class extends import_obsidian7.ItemView {
     super(leaf);
     this.conv = freshConv("main");
     this.busy = false;
+    /** 当前回答/指引的中止控制器（点「⏹ 停止」时 abort） */
+    this.abortCtl = null;
     // 工作区树形弹层（挂 body，fixed 定位，避免面板裁剪）
     this.wsPopOpen = false;
     /** 弹层外部点击/Esc 关闭（挂 document，onClose 移除） */
@@ -48287,6 +48301,24 @@ var TutorView = class extends import_obsidian7.ItemView {
     this.searchResultsEl = container.createEl("div", { cls: "edge-tutor-search-results" });
     this.chipsEl = container.createEl("div", { cls: "edge-tutor-context-chips" });
     this.chipsEl.style.display = "none";
+    const opRow = container.createEl("div", { cls: "edge-tutor-op-row" });
+    const opTemplates = [
+      ["\u{1F50D} \u4E3A\u4EC0\u4E48", "\u4E3A\u4EC0\u4E48\u8FD9\u91CC\u9700\u8981\u8FD9\u4E2A\uFF1F\u5B83\u89E3\u51B3\u4EC0\u4E48\u77DB\u76FE\uFF1F"],
+      ["\u{1F6A7} \u8FB9\u754C", "\u5982\u679C\u628A\u6761\u4EF6\u53BB\u6389/\u653E\u5BBD\u4F1A\u600E\u6837\uFF1F\u5931\u6548\u8FB9\u754C\u5728\u54EA\uFF1F"],
+      ["\u26A1 \u53CD\u4F8B", "\u80FD\u5426\u6784\u9020\u4E00\u4E2A\u53CD\u4F8B\u6253\u7834\u8FD9\u4E2A\u7ED3\u8BBA\uFF1F"],
+      ["\u2B06 \u4E00\u822C\u5316", "\u8FD9\u662F\u54EA\u4E2A\u66F4\u4E00\u822C\u7ED3\u6784\u7684\u7279\u4F8B\uFF1F"],
+      ["\u2B07 \u7279\u6B8A\u5316", "\u8FD9\u4E2A\u89C4\u5F8B\u5728\u4EC0\u4E48\u5177\u4F53\u573A\u666F\u4F1A\u53D8\u5F62/\u5931\u6548\uFF1F"],
+      ["\u{1F52E} \u4E0B\u4E00\u5835\u5899", "\u89E3\u51B3\u5B83\u4E4B\u540E\uFF0C\u4E0B\u4E00\u4E2A\u5361\u70B9\u53EF\u80FD\u662F\u4EC0\u4E48\uFF1F"]
+    ];
+    for (const [label, tpl] of opTemplates) {
+      const b = opRow.createEl("button", { text: label, cls: "edge-tutor-op-chip", attr: { title: tpl } });
+      b.addEventListener("click", () => {
+        const cur = this.inputEl.value;
+        this.inputEl.value = (cur.trim() ? cur.trimEnd() + "\n" : "") + tpl;
+        this.inputEl.focus();
+        this.scheduleDraftSave();
+      });
+    }
     const inputRow = container.createEl("div", { cls: "edge-tutor-input-row" });
     this.inputRowEl = inputRow;
     this.inputEl = inputRow.createEl("textarea", {
@@ -48294,7 +48326,14 @@ var TutorView = class extends import_obsidian7.ItemView {
       attr: { placeholder: "\u8FFD\u95EE\u6216\u63D0\u95EE\u2026\uFF08Enter \u53D1\u9001\uFF0CShift+Enter \u6362\u884C\uFF09", rows: "3" }
     });
     this.sendBtn = inputRow.createEl("button", { text: "\u53D1\u9001", cls: "edge-tutor-send" });
-    this.sendBtn.addEventListener("click", () => this.sendFromInput());
+    this.sendBtn.addEventListener("click", () => {
+      if (this.busy && this.abortCtl) {
+        this.abortCtl.abort();
+        this.setStatus("\u23F9 \u6B63\u5728\u505C\u6B62\u2026");
+        return;
+      }
+      void this.sendFromInput();
+    });
     this.inputEl.addEventListener("input", () => this.scheduleDraftSave());
     this.inputEl.addEventListener("keydown", (e) => {
       if (this.noteSuggest && this.noteSuggest.isSuggestOpen()) {
@@ -48775,8 +48814,10 @@ var TutorView = class extends import_obsidian7.ItemView {
   async respond() {
     if (this.busy) return;
     this.busy = true;
-    this.sendBtn.setText("\u601D\u8003\u4E2D\u2026");
-    this.sendBtn.disabled = true;
+    this.abortCtl = new AbortController();
+    this.sendBtn.setText("\u23F9 \u505C\u6B62");
+    this.sendBtn.disabled = false;
+    this.sendBtn.addClass("edge-tutor-stop");
     const sysPrompt = buildSystemPrompt();
     const history = [{ role: "system", content: sysPrompt }];
     const lastUser = [...this.conv.messages].reverse().find((m) => m.role === "user");
@@ -48844,10 +48885,7 @@ ${branchInstr}` : "";
           const div = document.createElement("div");
           div.className = "edge-tutor-md";
           commitContainer.appendChild(div);
-          void import_obsidian7.MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => {
-            this.attachCitationButtons(div);
-            this.attachCodeCopyButtons(div);
-          });
+          void import_obsidian7.MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => this.postProcess(div));
         }
       }
       streamTextEl.textContent = rest;
@@ -48858,10 +48896,7 @@ ${branchInstr}` : "";
         const div = document.createElement("div");
         div.className = "edge-tutor-md";
         commitContainer.appendChild(div);
-        void import_obsidian7.MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => {
-          this.attachCitationButtons(div);
-          this.attachCodeCopyButtons(div);
-        });
+        void import_obsidian7.MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => this.postProcess(div));
         pending = "";
         streamTextEl.textContent = "";
       }
@@ -48883,6 +48918,7 @@ ${branchInstr}` : "";
     const getPartial = () => partialMsg;
     try {
       const answer = await streamCompletion(this.plugin.settings, history, {
+        signal: this.abortCtl?.signal,
         onDelta: (delta) => {
           streamed += delta;
           pending += delta;
@@ -48917,7 +48953,18 @@ ${branchInstr}` : "";
       streamingEl.remove();
       this.renderAll();
     } catch (e) {
-      if (streamed) {
+      if (this.abortCtl?.signal.aborted) {
+        if (streamed) {
+          persistPartial();
+          const partial = getPartial();
+          if (partial) partial.content = streamed + "\n\n\u23F9 \u5DF2\u505C\u6B62\u751F\u6210";
+          await this.plugin.saveConv(this.conv);
+          this.renderAll();
+        } else {
+          streamingEl.remove();
+        }
+        this.setStatus("\u23F9 \u5DF2\u505C\u6B62\u751F\u6210");
+      } else if (streamed) {
         const errMsg = `
 
 \u26A0\uFE0F \u56DE\u7B54\u4E2D\u65AD\uFF1A${e.message.slice(0, 120)}`;
@@ -48936,6 +48983,8 @@ ${branchInstr}` : "";
       }
     } finally {
       this.busy = false;
+      this.abortCtl = null;
+      this.sendBtn.removeClass("edge-tutor-stop");
       this.sendBtn.setText("\u53D1\u9001");
       this.sendBtn.disabled = false;
       if (searchNote) this.setStatus(`\u56DE\u7B54\u5B8C\u6210 ${searchNote}`);
@@ -49008,8 +49057,10 @@ ${branchInstr}` : "";
     }
     const userMsg = this.conv.messages[uIdx];
     this.busy = true;
-    this.sendBtn.setText("\u601D\u8003\u4E2D\u2026");
-    this.sendBtn.disabled = true;
+    this.abortCtl = new AbortController();
+    this.sendBtn.setText("\u23F9 \u505C\u6B62");
+    this.sendBtn.disabled = false;
+    this.sendBtn.addClass("edge-tutor-stop");
     this.setStatus("\u{1F504} \u91CD\u65B0\u751F\u6210\u4E2D\u2026");
     const history = [{ role: "system", content: buildSystemPrompt() }];
     const userThread = userMsg.lineId ? this.conv.reading.threads.find((t) => t.id === userMsg.lineId) : null;
@@ -49039,6 +49090,7 @@ ${branchInstr}` : "";
     let streamed = "";
     try {
       const answer = await streamCompletion(this.plugin.settings, history, {
+        signal: this.abortCtl?.signal,
         onDelta: (delta) => {
           streamed += delta;
           streamTextEl.textContent = streamed;
@@ -49060,7 +49112,14 @@ ${branchInstr}` : "";
       this.renderAll();
       this.setStatus(`\u{1F504} \u5DF2\u91CD\u65B0\u751F\u6210${searchNote ? " " + searchNote : ""}`);
     } catch (e) {
-      if (streamed) {
+      if (this.abortCtl?.signal.aborted) {
+        if (streamed) {
+          target.content = streamed + "\n\n\u23F9 \u5DF2\u505C\u6B62\u751F\u6210";
+          await this.plugin.saveConv(this.conv);
+          this.renderAll();
+        }
+        this.setStatus("\u23F9 \u5DF2\u505C\u6B62\u751F\u6210");
+      } else if (streamed) {
         target.content = streamed + `
 
 \u26A0\uFE0F \u56DE\u7B54\u4E2D\u65AD\uFF1A${e.message.slice(0, 120)}`;
@@ -49073,6 +49132,8 @@ ${branchInstr}` : "";
       }
     } finally {
       this.busy = false;
+      this.abortCtl = null;
+      this.sendBtn.removeClass("edge-tutor-stop");
       this.sendBtn.setText("\u53D1\u9001");
       this.sendBtn.disabled = false;
     }
@@ -49085,6 +49146,10 @@ ${branchInstr}` : "";
     if (!picked) return;
     const { scope, mode } = picked;
     this.busy = true;
+    this.abortCtl = new AbortController();
+    this.sendBtn.setText("\u23F9 \u505C\u6B62");
+    this.sendBtn.disabled = false;
+    this.sendBtn.addClass("edge-tutor-stop");
     const active = activeThread(this.conv);
     const scopeLabel = scope === "whole" ? "\u5168\u4E66" : "\u5F53\u524D\u4F4D\u7F6E\u9644\u8FD1";
     const modeLabel = mode === "deepen" ? "\u6DF1\u5316\u5F53\u524D\u94FE" : mode === "frontier" ? "\u5168\u4E66\u65B0\u57DF" : "\u6DF7\u5408";
@@ -49145,6 +49210,7 @@ ${branchInstr}` : "";
         }
       ];
       const answer = await streamCompletion(this.plugin.settings, guideMessages, {
+        signal: this.abortCtl?.signal,
         onDelta: (delta) => {
           streamed += delta;
           streamTextEl.textContent = streamed;
@@ -49171,9 +49237,18 @@ ${answer}`;
       }
       await this.plugin.saveConv(this.conv);
     } catch (e) {
-      this.replaceMessage(loadingMsg, { role: "assistant", content: `\u26A0\uFE0F \u65B9\u5411\u6307\u5F15\u5931\u8D25\uFF1A${e.message.slice(0, 150)}` });
+      if (this.abortCtl?.signal.aborted) {
+        this.replaceMessage(loadingMsg, { role: "assistant", content: "\u23F9 \u65B9\u5411\u6307\u5F15\u5DF2\u505C\u6B62\u3002" });
+        this.setStatus("\u23F9 \u5DF2\u505C\u6B62\u6307\u5F15");
+      } else {
+        this.replaceMessage(loadingMsg, { role: "assistant", content: `\u26A0\uFE0F \u65B9\u5411\u6307\u5F15\u5931\u8D25\uFF1A${e.message.slice(0, 150)}` });
+      }
     } finally {
       this.busy = false;
+      this.abortCtl = null;
+      this.sendBtn.removeClass("edge-tutor-stop");
+      this.sendBtn.setText("\u53D1\u9001");
+      this.sendBtn.disabled = false;
     }
   }
   /**
@@ -49234,6 +49309,37 @@ ${answer}`;
     }
     await this.sedimentThread(active.id);
     new import_obsidian7.Notice("\u2705 \u8BA4\u77E5\u8282\u70B9\u5DF2\u6C89\u6DC0");
+  }
+  /** 把单条回答沉淀为独立认知节点（v0.11.0；挂在所属线程节点之下，不改线程 nodeFile） */
+  async sedimentSingleMessage(m) {
+    const thread = m.lineId ? this.conv.reading.threads.find((t) => t.id === m.lineId) : null;
+    const defaultTitle = makeNodeTitle(thread?.rootQuestion || thread?.title || "\u6C89\u6DC0\u8282\u70B9");
+    const title = await new PromptModal(this.app, "\u6C89\u6DC0\u8FD9\u6761\u56DE\u7B54", "\u8282\u70B9\u6807\u9898\uFF08\u53EF\u6539\uFF09", defaultTitle).openPrompt();
+    if (title == null) return;
+    const existingTitles = /* @__PURE__ */ new Set();
+    const dir = this.app.vault.getAbstractFileByPath(this.plugin.workspaceFolder(this.currentWorkspace));
+    if (dir instanceof import_obsidian7.TFolder) {
+      for (const child of dir.children) {
+        if (!(child instanceof import_obsidian7.TFile) || !child.name.endsWith(".md")) continue;
+        if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
+        existingTitles.add(child.basename);
+      }
+    }
+    const node = {
+      title: makeNodeTitle(title),
+      content: "",
+      parentTitle: thread ? resolveParentTitle(thread, existingTitles) : void 0,
+      anchor: { sourcePath: thread?.anchor?.sourcePath ?? m.anchor ?? "", quote: thread?.anchor?.quote ?? "" },
+      status: thread?.status ?? "active",
+      rootQuestion: title,
+      summary: thread?.summary,
+      response: m.content,
+      mastery: thread?.mastery,
+      workspace: this.currentWorkspace
+    };
+    const f = await this.plugin.createNode(node);
+    new import_obsidian7.Notice(`\u2705 \u5DF2\u6C89\u6DC0\u8282\u70B9\uFF1A${f.basename}`);
+    this.setStatus(`\u5DF2\u6C89\u6DC0\u300C${f.basename}\u300D\uFF08\u72EC\u7ACB\u8282\u70B9\uFF0C\u53EF\u5728\u5BFC\u56FE/\u8282\u70B9\u76EE\u5F55\u67E5\u770B\uFF09`);
   }
   /** 沉淀全部线程（清屏前兜底）：根在前，保证 parentTitle 解析时父文件已存在 */
   async sedimentAllThreads() {
@@ -49706,7 +49812,9 @@ ${answer}`;
           this.setStatus("\u5DF2\u5220\u9664\u8BE5\u6761\u6D88\u606F");
         };
         modal.open();
-      }
+      },
+      // 单条回答沉淀（仅普通 AI 回答；导引/执行结果除外）
+      onSediment: m.role === "assistant" && !m.agent && !m.content.trimStart().startsWith("\u{1F9ED}") ? () => void this.sedimentSingleMessage(m) : void 0
     });
   }
   /** 消息渲染（含编辑按钮，无线程归属则纯展示） */
@@ -49747,8 +49855,7 @@ ${answer}`;
       }
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
       void import_obsidian7.MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
-        this.attachCitationButtons(mdEl);
-        this.attachCodeCopyButtons(mdEl);
+        this.postProcess(mdEl);
       });
       if (opts.role === "assistant") {
         const ctx = el2.createEl("div", { cls: "edge-tutor-msg-ctx" });
@@ -49757,8 +49864,7 @@ ${answer}`;
     } else {
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
       void import_obsidian7.MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
-        this.attachCitationButtons(mdEl);
-        this.attachCodeCopyButtons(mdEl);
+        this.postProcess(mdEl);
       });
     }
     if (opts.onEdit || opts.onRegenerate || opts.onDelete) {
@@ -49777,6 +49883,9 @@ ${answer}`;
           }
         }
       ];
+      if (opts.onSediment) {
+        buttons.push({ label: "\u{1F4DD} \u6C89\u6DC0", tip: "\u628A\u8FD9\u6761\u56DE\u7B54\u6C89\u6DC0\u4E3A\u72EC\u7ACB\u8BA4\u77E5\u8282\u70B9", handler: () => opts.onSediment() });
+      }
       if (opts.onEdit) {
         buttons.push({
           label: "\u270F\uFE0F \u7F16\u8F91",
@@ -49817,6 +49926,12 @@ ${answer}`;
       (msg) => new import_obsidian7.Notice(msg),
       (e) => console.error("\u590D\u5236\u4EE3\u7801\u5931\u8D25", e)
     );
+  }
+  /** Markdown 渲染后处理：引用按钮 + 代码复制 + 面板内双链跳主区（避免面板被笔记覆盖） */
+  postProcess(mdEl) {
+    this.attachCitationButtons(mdEl);
+    this.attachCodeCopyButtons(mdEl);
+    attachInternalLinkInterception(mdEl, (path3) => void this.app.workspace.openLinkText(path3, "", false));
   }
   scrollToBottom() {
     if (this.msgContainer) {

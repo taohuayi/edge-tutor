@@ -1553,5 +1553,36 @@
   flex-wrap: wrap;
 }
 
+/* ================================================================
+ * v0.11.0 功能补强样式 —— 追问算子快捷行 / 停止按钮
+ * ================================================================ */
+.edge-tutor-op-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 2px;
+}
+.edge-tutor-op-chip {
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+.edge-tutor-op-chip:hover {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-secondary));
+  transform: translateY(-1px);
+}
+/* 生成中：发送按钮变停止按钮 */
+.edge-tutor-send.edge-tutor-stop {
+  background: var(--text-error);
+  animation: edge-tutor-pulse 1.2s ease-in-out infinite;
+}
+
 
 
