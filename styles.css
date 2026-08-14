@@ -1457,4 +1457,101 @@
   color: var(--interactive-accent);
 }
 
+/* ================================================================
+ * v0.10.5 agentview 视觉对齐 —— 执行面板吃齐 v0.10.0 样式红利
+ * ================================================================ */
+
+/* 任务卡：assistant 风格 + accent 左边条（agent 日志是系统输出，不是用户消息） */
+.edge-tutor-msg.edge-tutor-msg-agent {
+  border-left: 3px solid var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 4%, var(--background-secondary));
+}
+
+/* 状态徽章：胶囊分色 */
+.edge-tutor-task-status {
+  display: inline-block;
+  font-size: 0.72em;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+}
+.edge-tutor-task-status.st-done {
+  background: color-mix(in srgb, #2ecc71 16%, transparent);
+  color: color-mix(in srgb, #2ecc71 70%, var(--text-normal));
+}
+.edge-tutor-task-status.st-error {
+  background: color-mix(in srgb, var(--text-error) 14%, transparent);
+  color: var(--text-error);
+}
+.edge-tutor-task-status.st-stopped {
+  background: var(--background-modifier-hover);
+  color: var(--text-faint);
+}
+.edge-tutor-task-status.running {
+  background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+  color: var(--interactive-accent);
+  animation: edge-tutor-pulse 1.4s ease-in-out infinite;
+}
+
+/* 任务指令行：引用感 */
+.edge-tutor-agent-task-input {
+  font-weight: 600;
+  font-size: 0.92em;
+  margin: 6px 0 8px;
+  padding: 6px 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  white-space: pre-wrap;
+}
+
+/* 步骤日志：嵌套面板 + 限高滚动 + 行分型着色 */
+.edge-tutor-agent-log {
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: var(--font-monospace);
+  font-size: 0.78em;
+}
+.edge-tutor-agent-log::-webkit-scrollbar { width: 8px; }
+.edge-tutor-agent-log::-webkit-scrollbar-thumb { background: var(--background-modifier-border); border-radius: 4px; }
+.edge-tutor-agent-log-call {
+  color: var(--text-normal);
+  font-weight: 500;
+  margin-top: 4px;
+}
+.edge-tutor-agent-log-call:first-child { margin-top: 0; }
+.edge-tutor-agent-log-result {
+  color: var(--text-muted);
+  font-size: 0.92em;
+  margin: 1px 0 4px 4px;
+  border-left: 1px solid var(--background-modifier-border);
+  padding-left: 6px;
+}
+
+/* 错误块 */
+.edge-tutor-agent-task-error {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-error) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-error) 30%, transparent);
+  font-size: 0.85em;
+}
+
+/* 头部：时间与状态徽章分布两端 */
+.edge-tutor-agent-task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+
 

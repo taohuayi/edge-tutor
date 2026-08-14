@@ -49941,11 +49941,21 @@ var AgentView = class extends import_obsidian8.ItemView {
   renderAll() {
     this.msgContainer.empty();
     if (this.conv.tasks.length === 0) {
-      const el2 = this.msgContainer.createEl("div", { cls: "edge-tutor-msg edge-tutor-assistant" });
-      el2.createEl("div", {
-        cls: "edge-tutor-msg-content",
-        text: "\u8FD8\u6CA1\u6709\u6267\u884C\u8BB0\u5F55\u3002\u8F93\u5165\u6307\u4EE4\u5F00\u59CB\uFF0C\u4F8B\u5982\uFF1A\n\n- \u628A\u5F53\u524D\u5DE5\u4F5C\u533A\u7684\u5BF9\u8BDD\u6574\u7406\u6210\u8BA4\u77E5\u8282\u70B9\u5E76\u6302\u5230\u5730\u56FE\n- \u626B\u63CF\u67D0\u76EE\u5F55\u4E0B\u6240\u6709 md \u6587\u4EF6\u751F\u6210 MOC \u7D22\u5F15\n- \u641C\u7D22\u5305\u542B\u300Cxxx\u300D\u7684\u7B14\u8BB0\u5E76\u6C47\u603B"
+      const hero = this.msgContainer.createEl("div", { cls: "edge-tutor-empty" });
+      hero.createEl("div", { cls: "edge-tutor-empty-icon", text: "\u{1F916}" });
+      hero.createEl("div", { cls: "edge-tutor-empty-title", text: "\u6267\u884C\u9762\u677F" });
+      hero.createEl("div", {
+        cls: "edge-tutor-empty-sub",
+        text: "\u8F93\u5165\u6307\u4EE4\uFF0Cagent \u5728 vault \u5185\u6267\u884C\uFF08\u8BB0\u5F55\u72EC\u7ACB\u5B58\u50A8\uFF0C\u4E0D\u8FDB\u5165\u5BF9\u8BDD\uFF09\u3002"
       });
+      const tips = hero.createEl("ul", { cls: "edge-tutor-empty-tips" });
+      for (const t of [
+        "\u628A\u5F53\u524D\u5DE5\u4F5C\u533A\u7684\u5BF9\u8BDD\u6574\u7406\u6210\u8BA4\u77E5\u8282\u70B9\u5E76\u6302\u5230\u5730\u56FE",
+        "\u626B\u63CF\u67D0\u76EE\u5F55\u4E0B\u6240\u6709 md \u6587\u4EF6\u751F\u6210 MOC \u7D22\u5F15",
+        "\u641C\u7D22\u5305\u542B\u300Cxxx\u300D\u7684\u7B14\u8BB0\u5E76\u6C47\u603B"
+      ]) {
+        tips.createEl("li", { text: t });
+      }
       return;
     }
     for (const task of [...this.conv.tasks].reverse()) {
@@ -49953,7 +49963,7 @@ var AgentView = class extends import_obsidian8.ItemView {
     }
   }
   renderTask(task) {
-    const el2 = this.msgContainer.createEl("div", { cls: "edge-tutor-msg edge-tutor-user edge-tutor-msg-agent" });
+    const el2 = this.msgContainer.createEl("div", { cls: "edge-tutor-msg edge-tutor-assistant edge-tutor-msg-agent" });
     el2.setAttribute("data-task-id", task.id);
     const content = el2.createEl("div", { cls: "edge-tutor-msg-content" });
     const head = content.createEl("div", { cls: "edge-tutor-agent-task-head" });
@@ -49961,7 +49971,7 @@ var AgentView = class extends import_obsidian8.ItemView {
     head.createEl("span", { text: `\u{1F916} ${time}`, cls: "edge-tutor-agent-badge" });
     head.createEl("span", {
       text: task.running ? " \u23F3 \u6267\u884C\u4E2D" : task.status === "done" ? " \u2705 \u5B8C\u6210" : task.status === "error" ? " \u26A0\uFE0F \u5931\u8D25" : task.status === "stopped" ? " \u23F9 \u5DF2\u505C\u6B62" : "",
-      cls: "edge-tutor-agent-badge"
+      cls: "edge-tutor-agent-badge edge-tutor-task-status st-" + task.status + (task.running ? " running" : "")
     });
     content.createEl("div", { text: task.input, cls: "edge-tutor-agent-task-input" });
     const log = content.createEl("div", { cls: "edge-tutor-agent-log" });
@@ -49970,9 +49980,9 @@ var AgentView = class extends import_obsidian8.ItemView {
     }
     for (const st3 of task.steps) {
       const args = st3.args.length > 100 ? st3.args.slice(0, 100) + "\u2026" : st3.args;
-      log.createEl("div", { text: `\u7B2C${st3.turn}\u8F6E \u2192 ${st3.name}(${args})`, cls: "edge-tutor-agent-log-line" });
+      log.createEl("div", { text: `\u7B2C${st3.turn}\u8F6E \u2192 ${st3.name}(${args})`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-call" });
       const summary = st3.result.split("\n").filter(Boolean).slice(0, 3).join(" ");
-      log.createEl("div", { text: `   \u21B3 ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line" });
+      log.createEl("div", { text: `   \u21B3 ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-result" });
     }
     if (task.status === "error" && task.error) {
       content.createEl("div", { text: `\u26A0\uFE0F ${task.error}`, cls: "edge-tutor-agent-task-error" });
@@ -50010,9 +50020,9 @@ var AgentView = class extends import_obsidian8.ItemView {
     const appendStepLog = (name, args, result) => {
       if (!this.pendingLogEl) return;
       const a = args.length > 100 ? args.slice(0, 100) + "\u2026" : args;
-      this.pendingLogEl.createEl("div", { text: `\u7B2C${task.steps.length}\u8F6E \u2192 ${name}(${a})`, cls: "edge-tutor-agent-log-line" });
+      this.pendingLogEl.createEl("div", { text: `\u7B2C${task.steps.length}\u8F6E \u2192 ${name}(${a})`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-call" });
       const summary = result.split("\n").filter(Boolean).slice(0, 3).join(" ");
-      this.pendingLogEl.createEl("div", { text: `   \u21B3 ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line" });
+      this.pendingLogEl.createEl("div", { text: `   \u21B3 ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-result" });
       this.scrollToBottom();
     };
     const t0 = Date.now();

@@ -156,11 +156,21 @@ export class AgentView extends ItemView {
   private renderAll() {
     this.msgContainer.empty();
     if (this.conv.tasks.length === 0) {
-      const el = this.msgContainer.createEl("div", { cls: "edge-tutor-msg edge-tutor-assistant" });
-      el.createEl("div", {
-        cls: "edge-tutor-msg-content",
-        text: "还没有执行记录。输入指令开始，例如：\n\n- 把当前工作区的对话整理成认知节点并挂到地图\n- 扫描某目录下所有 md 文件生成 MOC 索引\n- 搜索包含「xxx」的笔记并汇总",
+      const hero = this.msgContainer.createEl("div", { cls: "edge-tutor-empty" });
+      hero.createEl("div", { cls: "edge-tutor-empty-icon", text: "🤖" });
+      hero.createEl("div", { cls: "edge-tutor-empty-title", text: "执行面板" });
+      hero.createEl("div", {
+        cls: "edge-tutor-empty-sub",
+        text: "输入指令，agent 在 vault 内执行（记录独立存储，不进入对话）。",
       });
+      const tips = hero.createEl("ul", { cls: "edge-tutor-empty-tips" });
+      for (const t of [
+        "把当前工作区的对话整理成认知节点并挂到地图",
+        "扫描某目录下所有 md 文件生成 MOC 索引",
+        "搜索包含「xxx」的笔记并汇总",
+      ]) {
+        tips.createEl("li", { text: t });
+      }
       return;
     }
     // 最新在上
@@ -170,7 +180,7 @@ export class AgentView extends ItemView {
   }
 
   private renderTask(task: AgentTaskRecord) {
-    const el = this.msgContainer.createEl("div", { cls: "edge-tutor-msg edge-tutor-user edge-tutor-msg-agent" });
+    const el = this.msgContainer.createEl("div", { cls: "edge-tutor-msg edge-tutor-assistant edge-tutor-msg-agent" });
     el.setAttribute("data-task-id", task.id);
     const content = el.createEl("div", { cls: "edge-tutor-msg-content" });
 
@@ -183,7 +193,7 @@ export class AgentView extends ItemView {
         task.status === "done" ? " ✅ 完成" :
         task.status === "error" ? " ⚠️ 失败" :
         task.status === "stopped" ? " ⏹ 已停止" : "",
-      cls: "edge-tutor-agent-badge",
+      cls: "edge-tutor-agent-badge edge-tutor-task-status st-" + task.status + (task.running ? " running" : ""),
     });
 
     content.createEl("div", { text: task.input, cls: "edge-tutor-agent-task-input" });
@@ -195,9 +205,9 @@ export class AgentView extends ItemView {
     }
     for (const st of task.steps) {
       const args = st.args.length > 100 ? st.args.slice(0, 100) + "…" : st.args;
-      log.createEl("div", { text: `第${st.turn}轮 → ${st.name}(${args})`, cls: "edge-tutor-agent-log-line" });
+      log.createEl("div", { text: `第${st.turn}轮 → ${st.name}(${args})`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-call" });
       const summary = st.result.split("\n").filter(Boolean).slice(0, 3).join(" ");
-      log.createEl("div", { text: `   ↳ ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line" });
+      log.createEl("div", { text: `   ↳ ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-result" });
     }
 
     if (task.status === "error" && task.error) {
@@ -242,9 +252,9 @@ export class AgentView extends ItemView {
     const appendStepLog = (name: string, args: string, result: string) => {
       if (!this.pendingLogEl) return;
       const a = args.length > 100 ? args.slice(0, 100) + "…" : args;
-      this.pendingLogEl.createEl("div", { text: `第${task.steps.length}轮 → ${name}(${a})`, cls: "edge-tutor-agent-log-line" });
+      this.pendingLogEl.createEl("div", { text: `第${task.steps.length}轮 → ${name}(${a})`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-call" });
       const summary = result.split("\n").filter(Boolean).slice(0, 3).join(" ");
-      this.pendingLogEl.createEl("div", { text: `   ↳ ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line" });
+      this.pendingLogEl.createEl("div", { text: `   ↳ ${summary.slice(0, 140)}`, cls: "edge-tutor-agent-log-line edge-tutor-agent-log-result" });
       this.scrollToBottom();
     };
 
