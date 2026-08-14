@@ -9,6 +9,7 @@ import {
   splitCommittableParagraphs,
   parseCiteRef,
   normalizeMath,
+  buildWsTreeData,
 } from "./.build/viewlogic.cjs";
 
 test("paragraphReady：围栏成对且公式闭合 → true", () => {
@@ -59,4 +60,22 @@ test("normalizeMath：行内/块级公式转 Obsidian MathJax 格式", () => {
 test("normalizeMath：半截括号兜底（不破坏普通文本）", () => {
   assert.equal(normalizeMath("普通文本无公式"), "普通文本无公式");
   assert.equal(normalizeMath("半截 \\(x"), "半截 $x");
+});
+
+test("buildWsTreeData：main → 默认工作区；嵌套路径建树", () => {
+  const tree = buildWsTreeData(["main", "张宇基础30讲/1", "张宇基础30讲/2", "学习观/入门"]);
+  const names = tree.map((n) => n.name).sort();
+  assert.deepEqual(names, ["张宇基础30讲", "学习观", "默认工作区"].sort());
+  const zhangyu = tree.find((n) => n.name === "张宇基础30讲");
+  assert.ok(zhangyu, "应存在张宇基础30讲文件夹");
+  assert.equal(zhangyu.children.length, 2);
+  assert.equal(zhangyu.children[0].id, "张宇基础30讲/1");
+  assert.equal(zhangyu.children[0].name, "1");
+});
+
+test("buildWsTreeData：文件夹节点排前，文件夹内按中文排序", () => {
+  const tree = buildWsTreeData(["a/b", "c", "b"]);
+  // a 是文件夹（有子）应排最前
+  assert.equal(tree[0].name, "a");
+  assert.deepEqual(tree.slice(1).map((n) => n.name), ["b", "c"]);
 });

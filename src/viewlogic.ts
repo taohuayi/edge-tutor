@@ -212,3 +212,114 @@ export function buildMsgActBar(
   }
 }
 
+/* ===== C5 第四步新增（v0.10.4） ===== */
+
+/** 工作区树节点（id=可激活的工作区；children=子目录/子工作区） */
+export interface WsTreeItem {
+  name: string;
+  id?: string;
+  children: WsTreeItem[];
+}
+
+/** 工作区 id 列表（形如 教材名/子工作区名，可任意层级）→ 树（纯函数，可单测） */
+export function buildWsTreeData(workspaces: string[]): WsTreeItem[] {
+  const root: WsTreeItem = { name: "", children: [] };
+  const ensure = (parent: WsTreeItem, name: string): WsTreeItem => {
+    let n = parent.children.find((c) => c.name === name);
+    if (!n) {
+      n = { name, children: [] };
+      parent.children.push(n);
+    }
+    return n;
+  };
+  for (const ws of workspaces) {
+    if (ws === "main") {
+      root.children.push({ name: "默认工作区", id: "main", children: [] });
+      continue;
+    }
+    const segs = ws.split("/");
+    let cur = root;
+    for (let i = 0; i < segs.length; i++) {
+      cur = ensure(cur, segs[i]);
+      if (i === segs.length - 1) cur.id = ws; // 末段 = 可激活的工作区
+    }
+  }
+  const sort = (list: WsTreeItem[]) => {
+    list.sort(
+      (a, b) => (a.children.length ? 0 : 1) - (b.children.length ? 0 : 1) || a.name.localeCompare(b.name, "zh")
+    );
+    for (const n of list) if (n.children.length) sort(n.children);
+  };
+  sort(root.children);
+  return root.children;
+}
+
+/** 工作区树节点行渲染（递归）；currentWs/onSelect 由调用方注入 */
+export function renderWsTreeNode(
+  container: HTMLElement,
+  node: WsTreeItem,
+  depth: number,
+  expandSet: Set<string>,
+  opts: { currentWs: () => string; onSelect: (id: string) => void },
+): void {
+  const isFolder = node.children.length > 0;
+  const row = container.createEl("div", { cls: "edge-tutor-ws-tree-row" });
+  row.style.paddingLeft = (6 + depth * 14) + "px";
+  if (isFolder) {
+    row.createSpan({ cls: "edge-tutor-ws-tree-toggle", text: "▸" });
+    row.createSpan({ cls: "edge-tutor-ws-tree-name", text: node.name });
+    // 文件夹行点击 = 展开/收起；容器工作区本身由 ↙ 按钮激活
+    const sub = container.createEl("div", { cls: "edge-tutor-ws-tree-sub" });
+    sub.hidden = true;
+    const toggleIcon = row.querySelector(".edge-tutor-ws-tree-toggle")!;
+    row.onclick = (e) => {
+      e.stopPropagation();
+      const opening = sub.hidden;
+      toggleIcon.setText(opening ? "▾" : "▸");
+      sub.hidden = !opening;
+    };
+    if (node.id) {
+      const go = row.createEl("button", { cls: "edge-tutor-ws-tree-go", attr: { title: "打开容器工作区" } });
+      go.setText("↗");
+      go.onclick = (e) => {
+        e.stopPropagation();
+        opts.onSelect(node.id!);
+      };
+    }
+    // 当前工作区在祖先链上 → 默认展开
+    if (expandSet.has(node.name)) {
+      toggleIcon.setText("▾");
+      sub.hidden = false;
+    }
+    for (const c of node.children) renderWsTreeNode(sub, c, depth + 1, expandSet, opts);
+  } else {
+    row.createSpan({ cls: "edge-tutor-ws-tree-toggle", text: "·" });
+    row.createSpan({ cls: "edge-tutor-ws-tree-name", text: node.name });
+    row.onclick = () => {
+      opts.onSelect(node.id!);
+    };
+  }
+  if (node.id && node.id === opts.currentWs()) row.addClass("is-current");
+}
+
+/** 会话搜索结果行渲染（最多 50 条） */
+export function renderSearchResultRows(
+  el: HTMLElement,
+  hits: { role: string; lineId: string | null; excerpt?: string }[],
+  cursor: number,
+  onNavigate: (index: number) => void,
+): void {
+  hits.slice(0, 50).forEach((hit, i) => {
+    const row = el.createEl("button", {
+      cls: "edge-tutor-search-result" + (i === cursor ? " active" : ""),
+    });
+    row.createEl("span", { text: hit.role, cls: "edge-tutor-search-result-kind" });
+    row.createEl("span", {
+      text: (hit.lineId ? hit.lineId + " · " : "") + (hit.excerpt || ""),
+      cls: "edge-tutor-search-result-text",
+    });
+    row.addEventListener("click", () => onNavigate(i));
+  });
+}
+
+

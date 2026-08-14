@@ -19,7 +19,8 @@ import { buildGuideSystemPrompt, parseGuideResponse, GuideEntry, GuideMode, Cogn
 import { SearchHit } from "./search";
 import { parkQuestion, takeParked, makeNodeTitle, buildNodeContent } from "./tutor";
 import { NoteSuggest } from "./suggest";
-import { splitCommittableParagraphs, attachCitationButtonsDOM, attachCodeCopyButtonsDOM, normalizeMath, buildGuideEntryBox, buildMsgActBar } from "./viewlogic";
+import { splitCommittableParagraphs, attachCitationButtonsDOM, attachCodeCopyButtonsDOM, normalizeMath, buildGuideEntryBox, buildMsgActBar, buildWsTreeData, renderWsTreeNode, renderSearchResultRows } from "./viewlogic";
+import { initSelectionFloat } from "./selfloat";
 import { PromptModal, ConfirmModal, ClearModal, ScopeModal } from "./modals";
 import { initMapPanDOM, renderMindMap, MapRenderHost } from "./maprender";
 import {
@@ -61,13 +62,6 @@ export interface TutorPlugin {
   readonly textbookIndexStats: { files: number; chunks: number } | null;
   activateAgentView: () => Promise<void>;
   ensureOpenCodeServer: () => Promise<{ ok: boolean; message: string }>;
-}
-
-/** 工作区树节点（id=可激活的工作区；children=子工作区） */
-interface WsNode {
-  name: string;
-  id?: string;
-  children: WsNode[];
 }
 
 /** 兼容节点形状（view 传给 createNode 的最小结构） */
@@ -136,7 +130,7 @@ export class TutorView extends ItemView {
   private branchClipboard: ConvThread[] = [];
   /** 剪贴板分支的来源工作区（粘贴后「删除源」用） */
   private branchClipboardWs = "";
-  private selBtn: HTMLButtonElement | null = null;
+  private selFloatCleanup: (() => void) | null = null;
   private searchEl!: HTMLInputElement;
   private searchResultsEl!: HTMLElement;
   private searchCountEl!: HTMLElement;
@@ -474,7 +468,7 @@ export class TutorView extends ItemView {
     await this.flushDraft();
     // 宽屏切换的 detach 不写回旧会话（新面板已从磁盘加载更新后的 conv）
     if (!this.detachingForMove) await this.plugin.saveConv(this.conv);
-    if (this.selBtn) this.selBtn.remove();
+    if (this.selFloatCleanup) this.selFloatCleanup();
     // 释放外部修改监听
     if (this.modifyRef) {
       this.app.vault.offref(this.modifyRef);
@@ -1659,17 +1653,7 @@ export class TutorView extends ItemView {
       this.searchResultsEl.style.display = "none";
       return;
     }
-    hits.slice(0, 50).forEach((hit, i) => {
-      const row = this.searchResultsEl.createEl("button", {
-        cls: "edge-tutor-search-result" + (i === this.searchCursor ? " active" : ""),
-      });
-      row.createEl("span", { text: hit.role, cls: "edge-tutor-search-result-kind" });
-      row.createEl("span", {
-        text: (hit.lineId ? hit.lineId + " · " : "") + (hit.excerpt || ""),
-        cls: "edge-tutor-search-result-text",
-      });
-      row.addEventListener("click", () => this.navigateSearchHit(i));
-    });
+    renderSearchResultRows(this.searchResultsEl, hits, this.searchCursor, (i) => void this.navigateSearchHit(i));
     this.searchResultsEl.style.display = "block";
   }
 
@@ -1788,92 +1772,23 @@ export class TutorView extends ItemView {
     this.wsPopOpen = false;
   }
 
-  /** 工作区 id 列表（形如 教材名/子工作区名，可任意层级）→ 树 */
-  private buildWsTreeData(workspaces: string[]): WsNode[] {
-    const root: WsNode = { name: "", children: [] };
-    const ensure = (parent: WsNode, name: string): WsNode => {
-      let n = parent.children.find((c) => c.name === name);
-      if (!n) {
-        n = { name, children: [] };
-        parent.children.push(n);
-      }
-      return n;
-    };
-    for (const ws of workspaces) {
-      if (ws === "main") {
-        root.children.push({ name: "默认工作区", id: "main", children: [] });
-        continue;
-      }
-      const segs = ws.split("/");
-      let cur = root;
-      for (let i = 0; i < segs.length; i++) {
-        cur = ensure(cur, segs[i]);
-        if (i === segs.length - 1) cur.id = ws; // 末段 = 可激活的工作区
-      }
-    }
-    const sort = (list: WsNode[]) => {
-      list.sort(
-        (a, b) => (a.children.length ? 0 : 1) - (b.children.length ? 0 : 1) || a.name.localeCompare(b.name, "zh")
-      );
-      for (const n of list) if (n.children.length) sort(n.children);
-    };
-    sort(root.children);
-    return root.children;
-  }
-
-  /** 重建树弹层内容；当前工作区的祖先目录自动展开 */
+  /** 重建树弹层内容；当前工作区的祖先目录自动展开（树构建/行渲染已迁至 viewlogic.ts） */
   private rebuildWsTree(workspaces: string[]) {
     this.wsPop.empty();
     this.wsPop.createEl("div", { text: "选择工作区", cls: "edge-tutor-ws-pop-header" });
     const curSegs = this.currentWorkspace.split("/").slice(0, -1); // 祖先目录名
     const expandSet = new Set(curSegs);
-    const nodes = this.buildWsTreeData(workspaces);
+    const nodes = buildWsTreeData(workspaces);
     if (nodes.length === 0) {
       this.wsPop.createEl("div", { text: "（暂无工作区，点 ＋ 新建）", cls: "edge-tutor-ws-tree-empty" });
       return;
     }
-    for (const n of nodes) this.renderWsTreeNode(this.wsPop, n, 0, expandSet);
-  }
-
-  private renderWsTreeNode(container: HTMLElement, node: WsNode, depth: number, expandSet: Set<string>) {
-    const isFolder = node.children.length > 0;
-    const row = container.createEl("div", { cls: "edge-tutor-ws-tree-row" });
-    row.style.paddingLeft = `${6 + depth * 14}px`;
-    if (isFolder) {
-      row.createSpan({ cls: "edge-tutor-ws-tree-toggle", text: "▸" });
-      row.createSpan({ cls: "edge-tutor-ws-tree-name", text: node.name });
-      // 文件夹行点击 = 展开/收起；容器工作区本身由 ↙ 按钮激活
-      const sub = container.createEl("div", { cls: "edge-tutor-ws-tree-sub" });
-      sub.hidden = true;
-      const toggleIcon = row.querySelector(".edge-tutor-ws-tree-toggle")!;
-      row.onclick = (e) => {
-        e.stopPropagation();
-        const opening = sub.hidden;
-        toggleIcon.setText(opening ? "▾" : "▸");
-        sub.hidden = !opening;
-      };
-      if (node.id) {
-        const go = row.createEl("button", { cls: "edge-tutor-ws-tree-go", attr: { title: "打开容器工作区" } });
-        go.setText("↗");
-        go.onclick = (e) => {
-          e.stopPropagation();
-          void this.selectWorkspace(node.id!);
-        };
-      }
-      // 当前工作区在祖先链上 → 默认展开
-      if (expandSet.has(node.name)) {
-        toggleIcon.setText("▾");
-        sub.hidden = false;
-      }
-      for (const c of node.children) this.renderWsTreeNode(sub, c, depth + 1, expandSet);
-    } else {
-      row.createSpan({ cls: "edge-tutor-ws-tree-toggle", text: "·" });
-      row.createSpan({ cls: "edge-tutor-ws-tree-name", text: node.name });
-      row.onclick = () => {
-        void this.selectWorkspace(node.id!);
-      };
+    for (const n of nodes) {
+      renderWsTreeNode(this.wsPop, n, 0, expandSet, {
+        currentWs: () => this.currentWorkspace,
+        onSelect: (id) => void this.selectWorkspace(id),
+      });
     }
-    if (node.id && node.id === this.currentWorkspace) row.addClass("is-current");
   }
 
   /** 导图平移/滚动（Zotero：拖空白平移 + wheel 横向滚动；实现已迁至 maprender.ts） */
@@ -1924,75 +1839,17 @@ export class TutorView extends ItemView {
     };
   }
 
-  /** 选中文本浮动按钮 */
+  /** 选中文本浮动按钮（实现已迁至 selfloat.ts） */
   private initSelFloat() {
-    const selBtn = document.createElement("button");
-    selBtn.textContent = "由此追问";
-    selBtn.style.cssText =
-      "position:fixed;z-index:2147483647;background:#2563eb;color:#fff;border:none;" +
-      "border-radius:8px;padding:4px 12px;font:12px/1.6 -apple-system,'Segoe UI','Microsoft YaHei UI',sans-serif;" +
-      "cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3);display:none;";
-    document.body.appendChild(selBtn);
-    this.selBtn = selBtn;
-
-    const updateSelFloat = () => {
-      try {
-        const sel = document.getSelection();
-        if (!sel || !sel.rangeCount) {
-          selBtn.style.display = "none";
-          return;
-        }
-        const txt = String(sel).trim();
-        if (txt.length < 2) {
-          selBtn.style.display = "none";
-          return;
-        }
-        const rc = sel.getRangeAt(0).getBoundingClientRect();
-        if (!rc || rc.width < 2 || rc.height < 2) {
-          selBtn.style.display = "none";
-          return;
-        }
-        selBtn.setAttribute("data-sel", txt);
-        const x = rc.left + rc.width / 2 - 42;
-        let y = rc.top - 34;
-        if (y < 6) y = rc.bottom + 8;
-        // 避让输入框：按钮若与输入区相交（会挡住点击）→ 不显示
-        const btnRect = { left: Math.max(4, x), top: Math.max(4, y), width: 84, height: 28 };
-        const inputRect = this.inputRowEl?.getBoundingClientRect();
-        if (
-          inputRect &&
-          btnRect.left < inputRect.right &&
-          btnRect.left + btnRect.width > inputRect.left &&
-          btnRect.top < inputRect.bottom &&
-          btnRect.top + btnRect.height > inputRect.top
-        ) {
-          selBtn.style.display = "none";
-          return;
-        }
-        selBtn.style.left = btnRect.left + "px";
-        selBtn.style.top = btnRect.top + "px";
-        selBtn.style.display = "block";
-      } catch (e) {
-        selBtn.style.display = "none";
-      }
-    };
-
-    selBtn.addEventListener("click", async () => {
-      const txt = selBtn.getAttribute("data-sel") || "";
-      if (!txt) return;
-      // 面板内选中：锚点取所选回答的引用（【📖 文件:行】/所属线程锚点），
-      // 而不是活动 MarkdownView——面板聚焦时它常为 null（引用被静默丢弃）
-      // 或指向无关笔记（锚点错位）。
-      const anchorPath = this.isSelectionInPanel()
-        ? this.resolveSelectionAnchor()
-        : this.app.workspace.getActiveViewOfType(MarkdownView)?.file?.path ?? null;
-      document.getSelection()?.removeAllRanges();
-      selBtn.style.display = "none";
-      this.receiveSelection(txt, anchorPath ?? undefined);
+    this.selFloatCleanup = initSelectionFloat({
+      app: this.app,
+      contentEl: this.contentEl,
+      inputRowEl: this.inputRowEl ?? null,
+      registerInterval: (id) => this.registerInterval(id),
+      isInPanel: () => this.isSelectionInPanel(),
+      resolveAnchor: () => this.resolveSelectionAnchor(),
+      onSelect: (text, anchorPath) => this.receiveSelection(text, anchorPath),
     });
-
-    document.addEventListener("selectionchange", updateSelFloat);
-    this.registerInterval(window.setInterval(updateSelFloat, 500));
   }
 
   /** 当前选中是否发生在面板内（消息区），而非外部编辑器 */
