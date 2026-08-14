@@ -172,3 +172,22 @@ test("parseNodeFromContent：导师回应区内部标题不截断摘要", () => 
   assert.equal(parsed.parentTitle, "父节点");
   assert.equal(parsed.anchor.sourcePath, "PDF p.11");
 });
+
+test("buildNodeContent → parseNodeFromContent：originExcerpt/mastery 持久化", () => {
+  const md = buildNodeContent({
+    title: "T", content: "", anchor: { sourcePath: "", quote: "" }, status: "active",
+    originExcerpt: "这段原文引出", mastery: "mastered",
+  });
+  const parsed = parseNodeFromContent("T", md, "x.md");
+  assert.equal(parsed.originExcerpt, "这段原文引出");
+  assert.equal(parsed.mastery, "mastered");
+  assert.equal(parsed.locked, true); // mastery: mastered 视为封顶
+});
+
+test("buildNodeContent：anchor quote 中的 ASCII 引号被转义（YAML 不再被切断）", () => {
+  const md = buildNodeContent({
+    title: "T", content: "", anchor: { sourcePath: "p.md", quote: '含"引号"的引文' }, status: "active",
+  });
+  const parsed = parseNodeFromContent("T", md, "p.md");
+  assert.equal(parsed.anchor.quote, "含'引号'的引文");
+});

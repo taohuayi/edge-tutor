@@ -8,8 +8,13 @@ var __typeError = (msg) => {
   throw TypeError(msg);
 };
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __esm = (fn3, res) => function __init() {
-  return fn3 && (res = (0, fn3[__getOwnPropNames(fn3)[0]])(fn3 = 0)), res;
+var __esm = (fn3, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn3 && (res = (0, fn3[__getOwnPropNames(fn3)[0]])(fn3 = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -189,17 +194,17 @@ async function cs(t = {}) {
       var C = ct = f.exports;
       f = {};
       for (let [P, B] of Object.entries(C)) typeof B == "function" ? (C = Np(B), f[P] = C) : f[P] = B;
-      return ct = f, ct = function() {
+      return ct = f, ct = (function() {
         var P = ct, B = (F) => (se) => F(se) >>> 0, H = (F) => () => F() >>> 0;
         return (P = Object.assign({}, P)).tb = B(P.tb), P.Xb = H(P.Xb), P.Zb = B(P.Zb), P.lc = B(P.lc), P.mc = H(P.mc), P.qc = B(P.qc), P;
-      }(), Lo.push(ct._b), Bi = (f = ct).tb, Mi = f.ub, e._OrtInit = f.vb, e._OrtGetLastError = f.wb, e._OrtCreateSessionOptions = f.xb, e._OrtAppendExecutionProvider = f.yb, e._OrtAddFreeDimensionOverride = f.zb, e._OrtAddSessionConfigEntry = f.Ab, e._OrtReleaseSessionOptions = f.Bb, e._OrtCreateSession = f.Cb, e._OrtReleaseSession = f.Db, e._OrtGetInputOutputCount = f.Eb, e._OrtGetInputOutputMetadata = f.Fb, e._OrtFree = f.Gb, e._OrtCreateTensor = f.Hb, e._OrtGetTensorData = f.Ib, e._OrtReleaseTensor = f.Jb, e._OrtCreateRunOptions = f.Kb, e._OrtAddRunConfigEntry = f.Lb, e._OrtReleaseRunOptions = f.Mb, e._OrtCreateBinding = f.Nb, e._OrtBindInput = f.Ob, e._OrtBindOutput = f.Pb, e._OrtClearBoundOutputs = f.Qb, e._OrtReleaseBinding = f.Rb, e._OrtRunWithBinding = f.Sb, e._OrtRun = f.Tb, e._OrtEndProfiling = f.Ub, e._JsepOutput = f.Vb, e._JsepGetNodeName = f.Wb, wr = f.Xb, tt2 = e._free = f.Yb, Zt2 = e._malloc = f.Zb, Dn = f.ac, Ri = f.bc, Ui = f.cc, Ni = f.dc, Bn = f.ec, Vi = f.fc, Li = f.gc, ce = f.hc, Qt2 = f.ic, Wi = f.jc, ue = f.kc, Mn = f.lc, de = f.mc, Gi = f.nc, Rn = f.oc, Hi = f.pc, Fi = f.qc, qi = f.rc, Un = f.sc, Ki = f.tc, ji = f.uc, Zi = f.vc, Qi = f.wc, Yi = f.xc, Xi = f.yc, Ji = f.zc, ea = f.Ac, ta = f.Bc, ra = f.Cc, na = f.Dc, oa = f.Ec, ia = f.Fc, aa = f.Gc, sa = f.Hc, ua = f.Ic, da = f.Jc, la = f.Kc, ca = f.Lc, pa = f.Mc, ma = f.Nc, fa = f.Pc, ha = f.Qc, ga = f.$c, ba = f.ad, ya = f.fd, _a68 = f.jd, wa = f.kd, va2 = f.ld, $a2 = f.md, xa2 = f.nd, Sa2 = f.od, Ta2 = f.pd, Ia2 = f.qd, Ca2 = f.vd, Aa2 = f.Sd, Ea2 = f.Td, ka2 = f.Ud, Pa2 = f.Vd, y = w, ct;
+      })(), Lo.push(ct._b), Bi = (f = ct).tb, Mi = f.ub, e._OrtInit = f.vb, e._OrtGetLastError = f.wb, e._OrtCreateSessionOptions = f.xb, e._OrtAppendExecutionProvider = f.yb, e._OrtAddFreeDimensionOverride = f.zb, e._OrtAddSessionConfigEntry = f.Ab, e._OrtReleaseSessionOptions = f.Bb, e._OrtCreateSession = f.Cb, e._OrtReleaseSession = f.Db, e._OrtGetInputOutputCount = f.Eb, e._OrtGetInputOutputMetadata = f.Fb, e._OrtFree = f.Gb, e._OrtCreateTensor = f.Hb, e._OrtGetTensorData = f.Ib, e._OrtReleaseTensor = f.Jb, e._OrtCreateRunOptions = f.Kb, e._OrtAddRunConfigEntry = f.Lb, e._OrtReleaseRunOptions = f.Mb, e._OrtCreateBinding = f.Nb, e._OrtBindInput = f.Ob, e._OrtBindOutput = f.Pb, e._OrtClearBoundOutputs = f.Qb, e._OrtReleaseBinding = f.Rb, e._OrtRunWithBinding = f.Sb, e._OrtRun = f.Tb, e._OrtEndProfiling = f.Ub, e._JsepOutput = f.Vb, e._JsepGetNodeName = f.Wb, wr = f.Xb, tt2 = e._free = f.Yb, Zt2 = e._malloc = f.Zb, Dn = f.ac, Ri = f.bc, Ui = f.cc, Ni = f.dc, Bn = f.ec, Vi = f.fc, Li = f.gc, ce = f.hc, Qt2 = f.ic, Wi = f.jc, ue = f.kc, Mn = f.lc, de = f.mc, Gi = f.nc, Rn = f.oc, Hi = f.pc, Fi = f.qc, qi = f.rc, Un = f.sc, Ki = f.tc, ji = f.uc, Zi = f.vc, Qi = f.wc, Yi = f.xc, Xi = f.yc, Ji = f.zc, ea = f.Ac, ta = f.Bc, ra = f.Cc, na = f.Dc, oa = f.Ec, ia = f.Fc, aa = f.Gc, sa = f.Hc, ua = f.Ic, da = f.Jc, la = f.Kc, ca = f.Lc, pa = f.Mc, ma = f.Nc, fa = f.Pc, ha = f.Qc, ga = f.$c, ba = f.ad, ya = f.fd, _a68 = f.jd, wa = f.kd, va2 = f.ld, $a2 = f.md, xa2 = f.nd, Sa2 = f.od, Ta2 = f.pd, Ia2 = f.qd, Ca2 = f.vd, Aa2 = f.Sd, Ea2 = f.Td, ka2 = f.Ud, Pa2 = f.Vd, y = w, ct;
     }
     var l, h = G();
     return e.instantiateWasm ? new Promise((f) => {
       e.instantiateWasm(h, (w, C) => {
         f(a(w, C));
       });
-    }) : o ? a(new WebAssembly.Instance(y, G()), y) : (ae ?? (ae = e.locateFile ? e.locateFile ? e.locateFile("ort-wasm-simd-threaded.jsep.wasm", m) : m + "ort-wasm-simd-threaded.jsep.wasm" : new URL("ort-wasm-simd-threaded.jsep.wasm", import_meta.url).href), l = await async function(f) {
+    }) : o ? a(new WebAssembly.Instance(y, G()), y) : (ae ?? (ae = e.locateFile ? e.locateFile ? e.locateFile("ort-wasm-simd-threaded.jsep.wasm", m) : m + "ort-wasm-simd-threaded.jsep.wasm" : new URL("ort-wasm-simd-threaded.jsep.wasm", import_meta.url).href), l = await (async function(f) {
       var w = ae;
       if (!g && !z2(w)) try {
         var C = fetch(w, { credentials: "same-origin" });
@@ -207,9 +212,9 @@ async function cs(t = {}) {
       } catch (P) {
         A(`wasm streaming compile failed: ${P}`), A("falling back to ArrayBuffer instantiation");
       }
-      return async function(P, B) {
+      return (async function(P, B) {
         try {
-          var H = await async function(F) {
+          var H = await (async function(F) {
             if (!g) try {
               var se = await u(F);
               return new Uint8Array(se);
@@ -221,13 +226,13 @@ async function cs(t = {}) {
               F = d(F);
             }
             return F;
-          }(P);
+          })(P);
           return await WebAssembly.instantiate(H, B);
         } catch (F) {
           A(`failed to asynchronously prepare wasm: ${F}`), M(F);
         }
-      }(w, f);
-    }(h), a(l.instance, l.module));
+      })(w, f);
+    })(h), a(l.instance, l.module));
   }
   class Ee2 {
     constructor(l) {
@@ -434,7 +439,7 @@ async function cs(t = {}) {
     }
   };
   function lt(a, l, h = {}) {
-    return function(f, w, C = {}) {
+    return (function(f, w, C = {}) {
       var P = w.name;
       if (!f) throw new Nt(`type "${P}" must have a positive integer typeid pointer`);
       if (xn.hasOwnProperty(f)) {
@@ -442,7 +447,7 @@ async function cs(t = {}) {
         throw new Nt(`Cannot register type '${P}' twice`);
       }
       xn[f] = w, delete fp[f], $n.hasOwnProperty(f) && (w = $n[f], delete $n[f], w.forEach((B) => B()));
-    }(a, l, h);
+    })(a, l, h);
   }
   var pi = (a, l, h) => {
     switch (l) {
@@ -702,7 +707,7 @@ async function cs(t = {}) {
     };
     return bi.set(a, l), l;
   }
-  var bt = 0, et2 = null, hi = 0, gr = [], An = /* @__PURE__ */ new Map(), gi = /* @__PURE__ */ new Map(), bi = /* @__PURE__ */ new Map(), Vp = 0, En = null, Lp = [], yi = (a) => function(l) {
+  var bt = 0, et2 = null, hi = 0, gr = [], An = /* @__PURE__ */ new Map(), gi = /* @__PURE__ */ new Map(), bi = /* @__PURE__ */ new Map(), Vp = 0, En = null, Lp = [], yi = (a) => (function(l) {
     if (!E) {
       if (bt === 0) {
         var h = false, f = false;
@@ -710,10 +715,10 @@ async function cs(t = {}) {
           if (!E && (hi = w, h = true, f)) {
             bt = 2, hr(() => ka2(et2)), typeof MainLoop < "u" && MainLoop.ud && MainLoop.resume(), w = false;
             try {
-              var C = function() {
+              var C = (function() {
                 var H = (v(), D)[et2 + 8 >>> 2 >>> 0];
                 return H = gi.get(H), H = bi.get(H), --Ne, H();
-              }();
+              })();
             } catch (H) {
               C = H, w = true;
             }
@@ -724,18 +729,18 @@ async function cs(t = {}) {
             }
             if (w && !P) throw C;
           }
-        }), f = true, h || (bt = 1, et2 = function() {
+        }), f = true, h || (bt = 1, et2 = (function() {
           var w = Zt2(65548), C = w + 12;
           if ((v(), L)[w >>> 2 >>> 0] = C, (v(), L)[w + 4 >>> 2 >>> 0] = C + 65536, C = gr[0], !An.has(C)) {
             var P = Vp++;
             An.set(C, P), gi.set(P, C);
           }
           return C = An.get(C), (v(), D)[w + 8 >>> 2 >>> 0] = C, w;
-        }(), typeof MainLoop < "u" && MainLoop.ud && MainLoop.pause(), hr(() => Aa2(et2)));
+        })(), typeof MainLoop < "u" && MainLoop.ud && MainLoop.pause(), hr(() => Aa2(et2)));
       } else bt === 2 ? (bt = 0, hr(Pa2), tt2(et2), et2 = null, Lp.forEach(mr2)) : M(`invalid state: ${bt}`);
       return hi;
     }
-  }((l) => {
+  })((l) => {
     a().then(l);
   });
   function Wp(a) {
@@ -1015,15 +1020,15 @@ async function cs(t = {}) {
   function Tm(a) {
     return a >>> 0;
   }
-  o || function() {
+  o || (function() {
     for (var a = e.numThreads - 1; a--; ) Fo();
     Pe.push(async () => {
-      var l = async function() {
+      var l = (async function() {
         if (!o) return Promise.all(ft.map(Ho));
-      }();
+      })();
       he++, await l, --he == 0 && Te && (l = Te, Te = null, l());
     });
-  }(), o || (ht2 = new WebAssembly.Memory({ initial: 256, maximum: 65536, shared: true }), Me()), e.wasmBinary && (g = e.wasmBinary), e.stackSave = () => de(), e.stackRestore = (a) => ue(a), e.stackAlloc = (a) => Mn(a), e.setValue = function(a, l, h = "i8") {
+  })(), o || (ht2 = new WebAssembly.Memory({ initial: 256, maximum: 65536, shared: true }), Me()), e.wasmBinary && (g = e.wasmBinary), e.stackSave = () => de(), e.stackRestore = (a) => ue(a), e.stackAlloc = (a) => Mn(a), e.setValue = function(a, l, h = "i8") {
     switch (h.endsWith("*") && (h = "*"), h) {
       case "i1":
       case "i8":
@@ -14105,17 +14110,17 @@ async function es2(a = {}) {
       var c = ke2 = o.exports;
       o = {};
       for (let [h, b] of Object.entries(c)) typeof b == "function" ? (c = Ai(b), o[h] = c) : o[h] = b;
-      return ke2 = o, ke2 = function() {
+      return ke2 = o, ke2 = (function() {
         var h = ke2, b = (I) => (F) => I(F) >>> 0, E = (I) => () => I() >>> 0;
         return (h = Object.assign({}, h)).$b = b(h.$b), h.Cc = E(h.Cc), h.Ec = b(h.Ec), h.rd = /* @__PURE__ */ ((I) => (F, j) => I(F, j) >>> 0)(h.rd), h.wd = b(h.wd), h.xd = E(h.xd), h.Bd = b(h.Bd), h;
-      }(), hn2.push(ke2.id), lo2 = (o = ke2).$b, po2 = o.ac, r._OrtInit = o.bc, r._OrtGetLastError = o.cc, r._OrtCreateSessionOptions = o.dc, r._OrtAppendExecutionProvider = o.ec, r._OrtAddFreeDimensionOverride = o.fc, r._OrtAddSessionConfigEntry = o.gc, r._OrtReleaseSessionOptions = o.hc, r._OrtCreateSession = o.ic, r._OrtReleaseSession = o.jc, r._OrtGetInputOutputCount = o.kc, r._OrtGetInputOutputMetadata = o.lc, r._OrtFree = o.mc, r._OrtCreateTensor = o.nc, r._OrtGetTensorData = o.oc, r._OrtReleaseTensor = o.pc, r._OrtCreateRunOptions = o.qc, r._OrtAddRunConfigEntry = o.rc, r._OrtReleaseRunOptions = o.sc, r._OrtCreateBinding = o.tc, r._OrtBindInput = o.uc, r._OrtBindOutput = o.vc, r._OrtClearBoundOutputs = o.wc, r._OrtReleaseBinding = o.xc, r._OrtRunWithBinding = o.yc, r._OrtRun = o.zc, r._OrtEndProfiling = o.Ac, Dr2 = r._OrtGetWebGpuDevice = o.Bc, Wt2 = o.Cc, xe = r._free = o.Dc, pt2 = r._malloc = o.Ec, mo2 = r._wgpuBufferRelease = o.Fc, ho2 = r._wgpuCreateInstance = o.Gc, yo2 = o.Hc, bo2 = o.Ic, wo2 = o.Jc, go2 = o.Kc, To2 = o.Lc, vo2 = o.Pc, Eo2 = o.Zc, So2 = o._c, Ao2 = o.$c, Pr2 = o.bd, _r = o.cd, Rr2 = o.dd, Nr2 = o.ed, Et2 = o.fd, kr2 = o.gd, Io2 = o.hd, Wr2 = o.kd, xo2 = o.ld, Lo = o.md, Oo2 = o.nd, Fr2 = o.od, Bo2 = o.pd, Mo2 = o.qd, Gr2 = o.rd, N = o.sd, St2 = o.td, Co2 = o.ud, D = o.vd, Ft2 = o.wd, P = o.xd, Uo2 = o.yd, $r2 = o.zd, Do2 = o.Ad, Po2 = o.Bd, _o2 = o.Cd, zr2 = o.Dd, Ro2 = o.Ed, No2 = o.Fd, ko2 = o.Gd, Wo = o.Hd, Fo = o.Id, Go = o.Jd, $o2 = o.Kd, zo2 = o.Ld, Vo = o.Md, jo = o.Nd, Ho = o.Od, Yo = o.Pd, qo = o.Qd, Jo = o.Rd, Xo = o.Td, Qo = o.Ud, Zo = o.Vd, Ko = o.Wd, ea = o.Yd, ta = o.Zd, ra = o._d, na = o.$d, oa = o.ae, aa = o.oe, sa = o.pe, ia = o.qe, ua = o.re, fa = o.se, ca = o.te, da = o.ue, la = o.ve, pa = o.we, ma = o.xe, ha = o.ye, ya = o.Ye, ba = o.Ze, wa = o._e, ga = o.$e, v = u, ke2;
+      })(), hn2.push(ke2.id), lo2 = (o = ke2).$b, po2 = o.ac, r._OrtInit = o.bc, r._OrtGetLastError = o.cc, r._OrtCreateSessionOptions = o.dc, r._OrtAppendExecutionProvider = o.ec, r._OrtAddFreeDimensionOverride = o.fc, r._OrtAddSessionConfigEntry = o.gc, r._OrtReleaseSessionOptions = o.hc, r._OrtCreateSession = o.ic, r._OrtReleaseSession = o.jc, r._OrtGetInputOutputCount = o.kc, r._OrtGetInputOutputMetadata = o.lc, r._OrtFree = o.mc, r._OrtCreateTensor = o.nc, r._OrtGetTensorData = o.oc, r._OrtReleaseTensor = o.pc, r._OrtCreateRunOptions = o.qc, r._OrtAddRunConfigEntry = o.rc, r._OrtReleaseRunOptions = o.sc, r._OrtCreateBinding = o.tc, r._OrtBindInput = o.uc, r._OrtBindOutput = o.vc, r._OrtClearBoundOutputs = o.wc, r._OrtReleaseBinding = o.xc, r._OrtRunWithBinding = o.yc, r._OrtRun = o.zc, r._OrtEndProfiling = o.Ac, Dr2 = r._OrtGetWebGpuDevice = o.Bc, Wt2 = o.Cc, xe = r._free = o.Dc, pt2 = r._malloc = o.Ec, mo2 = r._wgpuBufferRelease = o.Fc, ho2 = r._wgpuCreateInstance = o.Gc, yo2 = o.Hc, bo2 = o.Ic, wo2 = o.Jc, go2 = o.Kc, To2 = o.Lc, vo2 = o.Pc, Eo2 = o.Zc, So2 = o._c, Ao2 = o.$c, Pr2 = o.bd, _r = o.cd, Rr2 = o.dd, Nr2 = o.ed, Et2 = o.fd, kr2 = o.gd, Io2 = o.hd, Wr2 = o.kd, xo2 = o.ld, Lo = o.md, Oo2 = o.nd, Fr2 = o.od, Bo2 = o.pd, Mo2 = o.qd, Gr2 = o.rd, N = o.sd, St2 = o.td, Co2 = o.ud, D = o.vd, Ft2 = o.wd, P = o.xd, Uo2 = o.yd, $r2 = o.zd, Do2 = o.Ad, Po2 = o.Bd, _o2 = o.Cd, zr2 = o.Dd, Ro2 = o.Ed, No2 = o.Fd, ko2 = o.Gd, Wo = o.Hd, Fo = o.Id, Go = o.Jd, $o2 = o.Kd, zo2 = o.Ld, Vo = o.Md, jo = o.Nd, Ho = o.Od, Yo = o.Pd, qo = o.Qd, Jo = o.Rd, Xo = o.Td, Qo = o.Ud, Zo = o.Vd, Ko = o.Wd, ea = o.Yd, ta = o.Zd, ra = o._d, na = o.$d, oa = o.ae, aa = o.oe, sa = o.pe, ia = o.qe, ua = o.re, fa = o.se, ca = o.te, da = o.ue, la = o.ve, pa = o.we, ma = o.xe, ha = o.ye, ya = o.Ye, ba = o.Ze, wa = o._e, ga = o.$e, v = u, ke2;
     }
     var t, n = Ye2();
     return r.instantiateWasm ? new Promise((o) => {
       r.instantiateWasm(n, (u, c) => {
         o(e(u, c));
       });
-    }) : i ? e(new WebAssembly.Instance(v, Ye2()), v) : (we2 ?? (we2 = r.locateFile ? r.locateFile ? r.locateFile("ort-wasm-simd-threaded.asyncify.wasm", T) : T + "ort-wasm-simd-threaded.asyncify.wasm" : new URL("ort-wasm-simd-threaded.asyncify.wasm", import_meta2.url).href), t = await async function(o) {
+    }) : i ? e(new WebAssembly.Instance(v, Ye2()), v) : (we2 ?? (we2 = r.locateFile ? r.locateFile ? r.locateFile("ort-wasm-simd-threaded.asyncify.wasm", T) : T + "ort-wasm-simd-threaded.asyncify.wasm" : new URL("ort-wasm-simd-threaded.asyncify.wasm", import_meta2.url).href), t = await (async function(o) {
       var u = we2;
       if (!g && !oe2(u)) try {
         var c = fetch(u, { credentials: "same-origin" });
@@ -14123,9 +14128,9 @@ async function es2(a = {}) {
       } catch (h) {
         O2(`wasm streaming compile failed: ${h}`), O2("falling back to ArrayBuffer instantiation");
       }
-      return async function(h, b) {
+      return (async function(h, b) {
         try {
-          var E = await async function(I) {
+          var E = await (async function(I) {
             if (!g) try {
               var F = await l(I);
               return new Uint8Array(F);
@@ -14137,13 +14142,13 @@ async function es2(a = {}) {
               I = m(I);
             }
             return I;
-          }(h);
+          })(h);
           return await WebAssembly.instantiate(E, b);
         } catch (I) {
           O2(`failed to asynchronously prepare wasm: ${I}`), Te(I);
         }
-      }(u, o);
-    }(n), e(t.instance, t.module));
+      })(u, o);
+    })(n), e(t.instance, t.module));
   }
   class wt2 {
     constructor(t) {
@@ -14350,7 +14355,7 @@ async function es2(a = {}) {
     }
   };
   function De2(e, t, n = {}) {
-    return function(o, u, c = {}) {
+    return (function(o, u, c = {}) {
       var h = u.name;
       if (!o) throw new dt2(`type "${h}" must have a positive integer typeid pointer`);
       if (vr.hasOwnProperty(o)) {
@@ -14358,7 +14363,7 @@ async function es2(a = {}) {
         throw new dt2(`Cannot register type '${h}' twice`);
       }
       vr[o] = u, delete Ks2[o], Tr2.hasOwnProperty(o) && (u = Tr2[o], delete Tr2[o], u.forEach((b) => b()));
-    }(e, t, n);
+    })(e, t, n);
   }
   var Fn2 = (e, t, n) => {
     switch (t) {
@@ -14618,7 +14623,7 @@ async function es2(a = {}) {
     };
     return jn2.set(e, t), t;
   }
-  var Ge2 = 0, Me = null, zn = 0, _t2 = [], xr2 = /* @__PURE__ */ new Map(), Vn = /* @__PURE__ */ new Map(), jn2 = /* @__PURE__ */ new Map(), Ii = 0, Lr2 = null, xi = [], Hn2 = (e) => function(t) {
+  var Ge2 = 0, Me = null, zn = 0, _t2 = [], xr2 = /* @__PURE__ */ new Map(), Vn = /* @__PURE__ */ new Map(), jn2 = /* @__PURE__ */ new Map(), Ii = 0, Lr2 = null, xi = [], Hn2 = (e) => (function(t) {
     if (!W2) {
       if (Ge2 === 0) {
         var n = false, o = false;
@@ -14626,10 +14631,10 @@ async function es2(a = {}) {
           if (!W2 && (zn = u, n = true, o)) {
             Ge2 = 2, Pt2(() => wa(Me)), typeof MainLoop < "u" && MainLoop.Xd && MainLoop.resume(), u = false;
             try {
-              var c = function() {
+              var c = (function() {
                 var E = (p(), x)[Me + 8 >>> 2 >>> 0];
                 return E = Vn.get(E), E = jn2.get(E), --G, E();
-              }();
+              })();
             } catch (E) {
               c = E, u = true;
             }
@@ -14640,18 +14645,18 @@ async function es2(a = {}) {
             }
             if (u && !h) throw c;
           }
-        }), o = true, n || (Ge2 = 1, Me = function() {
+        }), o = true, n || (Ge2 = 1, Me = (function() {
           var u = pt2(65548), c = u + 12;
           if ((p(), A)[u >>> 2 >>> 0] = c, (p(), A)[u + 4 >>> 2 >>> 0] = c + 65536, c = _t2[0], !xr2.has(c)) {
             var h = Ii++;
             xr2.set(c, h), Vn.set(h, c);
           }
           return c = xr2.get(c), (p(), x)[u + 8 >>> 2 >>> 0] = c, u;
-        }(), typeof MainLoop < "u" && MainLoop.Xd && MainLoop.pause(), Pt2(() => ya(Me)));
+        })(), typeof MainLoop < "u" && MainLoop.Xd && MainLoop.pause(), Pt2(() => ya(Me)));
       } else Ge2 === 2 ? (Ge2 = 0, Pt2(ga), xe(Me), Me = null, xi.forEach(he)) : Te(`invalid state: ${Ge2}`);
       return zn;
     }
-  }((t) => {
+  })((t) => {
     e().then(t);
   });
   function Li(e) {
@@ -15190,10 +15195,10 @@ async function es2(a = {}) {
         E = (p(), A)[I + 8 >>> 2 >>> 0];
       } }), c ? ((h = vt2(u + 24)) == -1 && (h = void 0), c = { buffer: L(c), offset: vt2(u + 16), size: h }) : c = L(h || b || E), { binding: (p(), A)[u + 4 >>> 2 >>> 0], resource: c };
     }
-    e >>>= 0, t = { label: Ne(4 + (t >>>= 0)), layout: L((p(), A)[t + 12 >>> 2 >>> 0]), entries: function(u, c) {
+    e >>>= 0, t = { label: Ne(4 + (t >>>= 0)), layout: L((p(), A)[t + 12 >>> 2 >>> 0]), entries: (function(u, c) {
       for (var h = [], b = 0; b < u; ++b) h.push(n(c + 40 * b));
       return h;
-    }((p(), A)[t + 16 >>> 2 >>> 0], (p(), A)[t + 20 >>> 2 >>> 0]) }, e = L(e);
+    })((p(), A)[t + 16 >>> 2 >>> 0], (p(), A)[t + 20 >>> 2 >>> 0]) }, e = L(e);
     var o = yo2(0);
     return uu2(o, e.createBindGroup(t)), o;
   }
@@ -15232,15 +15237,15 @@ async function es2(a = {}) {
   function nf(e, t, n, o, u) {
     n = ce(n), o >>>= 0, u >>>= 0, e = L(e >>> 0), t = L(t >>> 0), o = (p(), J2).subarray(o >>> 0, o + u >>> 0), e.writeBuffer(t, n, o, 0, u);
   }
-  i || function() {
+  i || (function() {
     for (var e = r.numThreads - 1; e--; ) gn2();
     Ae.push(async () => {
-      var t = async function() {
+      var t = (async function() {
         if (!i) return Promise.all(We2.map(wn));
-      }();
+      })();
       Oe2++, await t, --Oe2 == 0 && ee2 && (t = ee2, ee2 = null, t());
     });
-  }(), i || (Fe2 = new WebAssembly.Memory({ initial: 256, maximum: 65536, shared: true }), se()), r.wasmBinary && (g = r.wasmBinary), r.stackSave = () => P(), r.stackRestore = (e) => D(e), r.stackAlloc = (e) => Ft2(e), r.setValue = function(e, t, n = "i8") {
+  })(), i || (Fe2 = new WebAssembly.Memory({ initial: 256, maximum: 65536, shared: true }), se()), r.wasmBinary && (g = r.wasmBinary), r.stackSave = () => P(), r.stackRestore = (e) => D(e), r.stackAlloc = (e) => Ft2(e), r.setValue = function(e, t, n = "i8") {
     switch (n.endsWith("*") && (n = "*"), n) {
       case "i1":
       case "i8":
@@ -24390,7 +24395,7 @@ var init_transformers_node = __esm({
         this.fft.transform(out, input);
       }
     };
-    uint16_to_float32 = /* @__PURE__ */ function() {
+    uint16_to_float32 = /* @__PURE__ */ (function() {
       let float16LUT = null;
       return function(u16Array) {
         if (!float16LUT) {
@@ -24432,7 +24437,7 @@ var init_transformers_node = __esm({
         }
         return out;
       };
-    }();
+    })();
     ort_webgpu_bundle_min_exports = {};
     __export2(ort_webgpu_bundle_min_exports, {
       InferenceSession: () => qf2,
@@ -26580,7 +26585,7 @@ var init_transformers_node = __esm({
       const session = await createInferenceSession(new Uint8Array(session_bytes), session_options);
       return (
         /** @type {any} */
-        async (inputs) => {
+        (async (inputs) => {
           const proxied = isONNXProxy();
           const ortFeed = Object.fromEntries(
             Object.entries(inputs).map(([k22, v]) => [k22, (proxied ? v.clone() : v).ort_tensor])
@@ -26594,7 +26599,7 @@ var init_transformers_node = __esm({
               names
             ]);
           }
-        }
+        })
       );
     };
     TensorOpRegistry = (_a4 = class {
@@ -27658,7 +27663,7 @@ var init_transformers_node = __esm({
       // WebNN CPU
     });
     DEFAULT_DEVICE = apis.IS_NODE_ENV ? "cpu" : "wasm";
-    isWebGpuFp16Supported = /* @__PURE__ */ function() {
+    isWebGpuFp16Supported = /* @__PURE__ */ (function() {
       let cachedResult;
       return async function() {
         if (cachedResult === void 0) {
@@ -27675,7 +27680,7 @@ var init_transformers_node = __esm({
         }
         return cachedResult;
       };
-    }();
+    })();
     DATA_TYPES = Object.freeze({
       auto: "auto",
       // Auto-detect based on environment
@@ -44829,14 +44834,16 @@ var PRESET_PROVIDERS = [
     id: "deepseek",
     name: "DeepSeek\uFF08\u5B98\u65B9\uFF09",
     apiBase: "https://api.deepseek.com/v1",
-    apiKey: "sk-35ffe2de30b04ad0b7d592365f9e903e",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_DEEPSEEK",
     models: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"]
   },
   {
     id: "tokeness-claude",
     name: "Tokeness\uFF08Claude\uFF09",
     apiBase: "https://n.tokeness.io/v1",
-    apiKey: "sk-rjPPBDyyz3IYvU82pwTcVe8Hv76oaW9wKsd4QwZeC4ScDq2O",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_CLAUDE",
     // 实测（2026-08-10）：此 key 挂在 Claude 组，仅这 4 个模型可用，其余返回 model_not_found
     models: ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"]
   },
@@ -44844,7 +44851,8 @@ var PRESET_PROVIDERS = [
     id: "tokeness-gpt",
     name: "Tokeness\uFF08GPT\uFF09",
     apiBase: "https://n.tokeness.io/v1",
-    apiKey: "sk-aR3eFlf91K3FZFw1vCNeLu5d0FMgC01cWbFYDzORRuBbaDKk",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_GPT",
     // GPT 组 key（来源：Hermes config.yaml 的 providers.tokeness-gpt，2026-08-10 实测 6 模型全通）
     models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
   },
@@ -44852,7 +44860,8 @@ var PRESET_PROVIDERS = [
     id: "zhuomatech",
     name: "Zhuomatech",
     apiBase: "https://api.zhuomatech.cn/v1",
-    apiKey: "sk-3b456d2bab4cd33652f83730d8316824b6f5beafcb9297d8e0604d078cd06497",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_ZHUOMATECH",
     models: ["codex-auto-review", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra"]
   },
   {
@@ -44908,6 +44917,24 @@ function resolveProvider(settings) {
   if (found) return found;
   return PRESET_PROVIDERS[0];
 }
+function readEnv(name, env3) {
+  try {
+    const v = env3 ? env3[name] : globalThis?.process?.env?.[name];
+    return v ? String(v) : "";
+  } catch (e) {
+    return "";
+  }
+}
+function resolveProviderKey(settings, provider, env3) {
+  if (settings.apiKey && settings.apiKey.trim()) return settings.apiKey;
+  if (provider.keyEnv) {
+    const v = readEnv(provider.keyEnv, env3);
+    if (v) return v;
+  }
+  const globalEnv = readEnv(settings.apiKeyEnv || "EDGE_TUTOR_API_KEY", env3);
+  if (globalEnv) return globalEnv;
+  return provider.apiKey && provider.apiKey.trim() ? provider.apiKey : "";
+}
 function resolveAgentApiKey(settings) {
   if (settings.agentApiKeyEnv) {
     try {
@@ -44928,18 +44955,7 @@ function agentConfig(settings) {
 function activeEndpoint(settings) {
   const p = resolveProvider(settings);
   const apiBase = p.apiBase || settings.apiBase || "https://api.deepseek.com/v1";
-  const key = (
-    // 用户显式填的 key 优先（如 chat2api 反代 JWT；环境变量可能存着旧 key 会盖掉它）
-    (settings.apiKey && settings.apiKey.trim() ? settings.apiKey : "") || (p.apiKey && p.apiKey.trim() ? p.apiKey : "") || (() => {
-      try {
-        const env3 = globalThis?.process?.env?.[settings.apiKeyEnv || "EDGE_TUTOR_API_KEY"];
-        return env3 ? String(env3) : "";
-      } catch (e) {
-        return "";
-      }
-    })() || ""
-  );
-  return { apiBase, apiKey: key };
+  return { apiBase, apiKey: resolveProviderKey(settings, p) };
 }
 function buildSystemPrompt() {
   return [
@@ -45544,10 +45560,12 @@ function buildNodeContent(node) {
   lines.push("type: \u8BA4\u77E5\u8282\u70B9");
   lines.push("status: " + node.status);
   lines.push("created: " + (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
-  lines.push('anchor: "' + node.anchor.quote.slice(0, 80) + '"');
-  if (node.anchor.sourcePath) lines.push('anchorPath: "' + node.anchor.sourcePath + '"');
+  lines.push('anchor: "' + node.anchor.quote.slice(0, 80).replace(/"/g, "'") + '"');
+  if (node.anchor.sourcePath) lines.push('anchorPath: "' + node.anchor.sourcePath.replace(/"/g, "'") + '"');
   if (node.parentTitle) lines.push('parent: "[[' + node.parentTitle + ']]"');
   if (node.summary) lines.push('summary: "' + node.summary.replace(/"/g, "'").slice(0, 120) + '"');
+  if (node.originExcerpt) lines.push('originExcerpt: "' + node.originExcerpt.replace(/"/g, "'").replace(/\r?\n/g, " ").slice(0, 200) + '"');
+  if (node.mastery && node.mastery !== "fresh") lines.push("mastery: " + node.mastery);
   if (node.locked) lines.push("locked: true");
   lines.push("---");
   lines.push("");
@@ -45590,6 +45608,9 @@ function parseNodeFromContent(title, content, sourcePath) {
   const summaryMatch = content.match(/^summary:\s*"([^"]*)"/m);
   const anchorPathMatch = content.match(/^anchorPath:\s*"([^"]*)"/m);
   const lockedMatch = content.match(/^locked:\s*true/m);
+  const masteryMatch = content.match(/^mastery:\s*(mastered|exploring|fresh)/m);
+  const originExcerptMatch = content.match(/^originExcerpt:\s*"([^"]*)"/m);
+  const createdMatch = content.match(/^created:\s*"?(\d{4}-\d{2}-\d{2})"?/m);
   let rootQuestion;
   const qMatch = content.match(/## 🔍 追问\s*\n([\s\S]*?)\n## /);
   if (qMatch?.[1]) {
@@ -45599,6 +45620,7 @@ function parseNodeFromContent(title, content, sourcePath) {
   let summary;
   const full2 = extractMentorResponse(content);
   if (full2) summary = full2.slice(0, 300);
+  const mastery = masteryMatch?.[1];
   return {
     title,
     content,
@@ -45610,7 +45632,11 @@ function parseNodeFromContent(title, content, sourcePath) {
     status,
     rootQuestion,
     summary: summaryMatch?.[1] ?? summary,
-    locked: !!lockedMatch
+    // locked 真源是 locked 行；mastery: mastered 视为封顶（setNodeLocked 双写，老数据兼容）
+    locked: !!lockedMatch || mastery === "mastered",
+    mastery,
+    originExcerpt: originExcerptMatch?.[1] || void 0,
+    created: createdMatch?.[1] || void 0
   };
 }
 function buildMocContent(nodes) {
@@ -45655,7 +45681,7 @@ function rrfMerge(groups, k3 = 60) {
   const map = /* @__PURE__ */ new Map();
   for (const group of groups) {
     group.forEach((ref, rank) => {
-      const key = `${ref.file}\0${ref.startLine}`;
+      const key = `${ref.file}:${ref.startLine}`;
       const item = map.get(key) ?? { ref, score: 0 };
       item.score += 1 / (k3 + rank + 1);
       map.set(key, item);
@@ -46093,7 +46119,7 @@ function installCorsBypassFetch() {
       else sig.addEventListener("abort", () => req.destroy(), { once: true });
     }
   });
-  globalThis.fetch = (input, init) => {
+  globalThis.fetch = ((input, init) => {
     const url2 = typeof input === "string" ? input : input instanceof URL ? input.toString() : input?.url;
     if (typeof url2 !== "string") return nativeFetch(input, init);
     if (url2.startsWith("file://")) {
@@ -46103,7 +46129,7 @@ function installCorsBypassFetch() {
     if (/^[A-Za-z]:[\\/]/.test(url2)) return readLocal(url2, "application/octet-stream");
     if (/^https?:\/\/(hf-mirror\.com|huggingface\.co)/.test(url2)) return nodeRequest(url2, init, 0);
     return nativeFetch(input, init);
-  };
+  });
 }
 
 // src/vector.ts
@@ -46155,7 +46181,7 @@ function loadReranker(cacheDir, wasmDir) {
         tf.env.cacheDir = cacheDir;
         tf.env.allowLocalModels = false;
         if (wasmDir && tf.env.backends.onnx.wasm) {
-          tf.env.backends.onnx.wasm.wasmPaths = null;
+          tf.env.backends.onnx.wasm.wasmPaths = void 0;
           tf.env.backends.onnx.wasm.numThreads = 1;
           const fs6 = require("fs");
           const path3 = require("path");
@@ -46221,7 +46247,7 @@ function loadEmbedder(cacheDir, wasmDir) {
         tf.env.cacheDir = cacheDir;
         tf.env.allowLocalModels = false;
         if (wasmDir && tf.env.backends.onnx.wasm) {
-          tf.env.backends.onnx.wasm.wasmPaths = null;
+          tf.env.backends.onnx.wasm.wasmPaths = void 0;
           tf.env.backends.onnx.wasm.numThreads = 1;
           const fs6 = require("fs");
           const path3 = require("path");
@@ -46490,7 +46516,8 @@ function pauseActive(conv) {
 }
 function pushMessage(conv, role, content, opts = {}) {
   const msg = {
-    id: "m" + Date.now().toString(36),
+    // 加随机后缀：同毫秒连发（重建/粘贴批量 push）时 Date.now 基串会撞 id
+    id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     role,
     content,
     anchor: opts.anchor,
@@ -46512,20 +46539,22 @@ function buildConvFromNodes(nodes, workspace) {
   const idByTitle = /* @__PURE__ */ new Map();
   const idByCleaned = /* @__PURE__ */ new Map();
   const idByRootQuestion = /* @__PURE__ */ new Map();
+  const ids = nodes.map((_, i) => "q" + (i + 1));
   nodes.forEach((n, i) => {
-    const id = "q" + (i + 1);
-    idByTitle.set(n.title, id);
+    if (!idByTitle.has(n.title)) idByTitle.set(n.title, ids[i]);
     const cleaned = makeNodeTitle(n.rootQuestion || n.title);
-    if (cleaned && !idByCleaned.has(cleaned)) idByCleaned.set(cleaned, id);
-    if (n.rootQuestion && !idByRootQuestion.has(n.rootQuestion)) idByRootQuestion.set(n.rootQuestion, id);
+    if (cleaned && !idByCleaned.has(cleaned)) idByCleaned.set(cleaned, ids[i]);
+    if (n.rootQuestion && !idByRootQuestion.has(n.rootQuestion)) idByRootQuestion.set(n.rootQuestion, ids[i]);
   });
-  for (const n of nodes) {
-    const id = idByTitle.get(n.title);
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    const id = ids[i];
     const parentId = n.parentTitle ? idByTitle.get(n.parentTitle) ?? idByCleaned.get(n.parentTitle) ?? idByRootQuestion.get(n.parentTitle) ?? null : null;
     const thread = addThread(conv, {
       question: n.rootQuestion || n.title,
       parentId,
-      anchor: n.anchor
+      anchor: n.anchor,
+      originExcerpt: n.originExcerpt
     });
     thread.id = id;
     thread.title = n.title;
@@ -46533,7 +46562,13 @@ function buildConvFromNodes(nodes, workspace) {
     thread.summary = n.summary || "";
     thread.status = n.status;
     thread.nodeFile = n.filePath;
-    if (n.locked) thread.mastery = "mastered";
+    if (n.originExcerpt) thread.originExcerpt = n.originExcerpt;
+    if (n.created) {
+      const d = new Date(n.created);
+      if (!Number.isNaN(d.getTime())) thread.createdAt = d.toISOString();
+    }
+    if (n.locked || n.mastery === "mastered") thread.mastery = "mastered";
+    else if (n.mastery) thread.mastery = n.mastery;
     pushMessage(conv, "user", n.rootQuestion || n.title, { lineId: id });
     const fullResponse = extractMentorResponse(n.content);
     if (fullResponse) pushMessage(conv, "assistant", fullResponse, { lineId: id });
@@ -46919,6 +46954,7 @@ async function listNodes(app, workspacePath, excludeName) {
   return nodes;
 }
 async function buildMapSummary(app, workspacePath, nodes) {
+  void app;
   return {
     total: nodes.length,
     nodeTitles: nodes.map((n) => n.title),
@@ -47215,6 +47251,12 @@ var TutorView = class extends import_obsidian4.ItemView {
     this.branchOrigin = "";
     /** 待发送的原文锚点（由此追问选中，发送时使用） */
     this.pendingAnchor = null;
+    /**
+     * 选中追问标记（与 pendingAnchor 解耦）：
+     * 面板内选中（如选中回答里的文字）可能没有可解析的教材路径（pendingAnchor 为空），
+     * 但选中原文仍必须随问题进 prompt，否则回答会与选中内容脱节。
+     */
+    this.branchFromSelection = false;
     /** 已选中的方向导引入口，发送前允许用户改写 */
     this.pendingGuide = null;
     this.branchClipboard = [];
@@ -47228,6 +47270,10 @@ var TutorView = class extends import_obsidian4.ItemView {
     this.branchClipboardMessages = [];
     /** 消息滚动位置（按视图模式记忆） */
     this.messageScroll = {};
+    /** 上一次渲染的视图模式（切换时记住旧模式滚动位置） */
+    this.lastViewMode = "path";
+    /** 宽屏切换 detach 标记：onClose 不把旧会话写回磁盘（避免覆盖新面板刚加载的 conv） */
+    this.detachingForMove = false;
     /** 懒渲染窗口起点（按视图模式记忆，P2-6）：只渲染 [loadedStart, total) */
     this.loadedStart = {};
     /** 上一帧活跃线程 id（用于导图自动定位） */
@@ -47494,7 +47540,7 @@ var TutorView = class extends import_obsidian4.ItemView {
   }
   async onClose() {
     await this.flushDraft();
-    await this.plugin.saveConv(this.conv);
+    if (!this.detachingForMove) await this.plugin.saveConv(this.conv);
     if (this.selBtn) this.selBtn.remove();
     if (this.modifyRef) {
       this.app.vault.offref(this.modifyRef);
@@ -47534,6 +47580,7 @@ var TutorView = class extends import_obsidian4.ItemView {
    * 对齐 Zotero：选中后只聚焦输入框等用户提问，不立即发送。
    */
   receiveSelection(selection, sourcePath) {
+    this.branchFromSelection = true;
     this.branchOrigin = selection;
     this.branchNext = false;
     this.inputEl.value = "";
@@ -47554,27 +47601,31 @@ var TutorView = class extends import_obsidian4.ItemView {
   updateChips() {
     if (!this.chipsEl) return;
     this.chipsEl.empty();
-    if (!this.pendingAnchor) {
+    if (!this.pendingAnchor && !this.branchFromSelection) {
       this.chipsEl.style.display = "none";
       return;
     }
-    const src = this.pendingAnchor;
+    const src = this.pendingAnchor ?? "";
     const file = src.split("/").pop() ?? src;
     const quote = (this.branchOrigin || "").replace(/\s+/g, " ").trim().slice(0, 30);
-    const chip = this.chipsEl.createEl("button", { cls: "edge-tutor-context-chip", attr: { title: "\u70B9\u51FB\u8DF3\u8F6C\u5230\u539F\u6587\u4F4D\u7F6E" } });
-    const label = chip.createSpan({ text: `\u{1F4D6} ${file}${quote ? `\uFF1A${quote}` : ""}` });
+    const chip = this.chipsEl.createEl("button", {
+      cls: "edge-tutor-context-chip",
+      attr: { title: src ? "\u70B9\u51FB\u8DF3\u8F6C\u5230\u539F\u6587\u4F4D\u7F6E" : "\u9762\u677F\u5185\u9009\u4E2D\u6587\u5B57\uFF08\u65E0\u53EF\u8DF3\u8F6C\u7684\u6559\u6750\u8DEF\u5F84\uFF09" }
+    });
+    const label = chip.createSpan({ text: `${src ? `\u{1F4D6} ${file}` : "\u{1F4D6} \u9762\u677F\u9009\u4E2D"}${quote ? `\uFF1A${quote}` : ""}` });
     label.addClass("edge-tutor-chip-text");
     const x = chip.createEl("span", { text: "\xD7", cls: "edge-tutor-chip-x", attr: { title: "\u79FB\u9664\u5F15\u7528\uFF08\u8BE5\u6D88\u606F\u5C06\u4E0D\u5E26\u951A\u70B9\u53D1\u9001\uFF09" } });
     x.addEventListener("click", (e) => {
       e.stopPropagation();
       this.pendingAnchor = null;
       this.branchOrigin = "";
+      this.branchFromSelection = false;
       this.inputEl.placeholder = "\u8FFD\u95EE\u6216\u63D0\u95EE\u2026\uFF08Enter \u53D1\u9001\uFF0CShift+Enter \u6362\u884C\uFF09";
       this.updateChips();
       this.setStatus("\u5DF2\u79FB\u9664\u5F15\u7528\u6765\u6E90");
     });
     chip.addEventListener("click", () => {
-      if (this.pendingAnchor) void this.navigateToTextAnchor(this.pendingAnchor, this.branchOrigin || void 0);
+      if (src) void this.navigateToTextAnchor(src, this.branchOrigin || void 0);
     });
     this.chipsEl.style.display = "flex";
   }
@@ -47588,20 +47639,36 @@ var TutorView = class extends import_obsidian4.ItemView {
     await this.plugin.saveConv(this.conv);
     const root = leaf.getRoot();
     const inSidebar = root === this.app.workspace.leftSplit || root === this.app.workspace.rightSplit;
-    if (inSidebar) {
-      const newLeaf = this.app.workspace.getLeaf("tab");
-      await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
-      this.app.workspace.revealLeaf(newLeaf);
-      this.setStatus("\u5BBD\u5C4F\u6A21\u5F0F\uFF1A\u9762\u677F\u5DF2\u79FB\u5230\u4E3B\u7F16\u8F91\u533A\u3002\u518D\u6B21\u70B9 \u26F6 \u53EF\u56DE\u5230\u4FA7\u680F\u3002");
-    } else {
-      const newLeaf = this.app.workspace.getRightLeaf(false);
-      if (!newLeaf) return;
-      await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
-      this.app.workspace.revealLeaf(newLeaf);
+    this.detachingForMove = true;
+    try {
+      if (inSidebar) {
+        const newLeaf = this.app.workspace.getLeaf("tab");
+        await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
+        this.app.workspace.revealLeaf(newLeaf);
+        await leaf.detach();
+        this.setStatus("\u5BBD\u5C4F\u6A21\u5F0F\uFF1A\u9762\u677F\u5DF2\u79FB\u5230\u4E3B\u7F16\u8F91\u533A\u3002\u518D\u6B21\u70B9 \u26F6 \u53EF\u56DE\u5230\u4FA7\u680F\u3002");
+      } else {
+        const newLeaf = this.app.workspace.getRightLeaf(false);
+        if (!newLeaf) {
+          this.detachingForMove = false;
+          return;
+        }
+        await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
+        this.app.workspace.revealLeaf(newLeaf);
+        await leaf.detach();
+        this.setStatus("\u9762\u677F\u5DF2\u56DE\u5230\u53F3\u4FA7\u8FB9\u680F\u3002");
+      }
+    } catch (e) {
+      this.detachingForMove = false;
+      console.warn("[edge-tutor] \u5BBD\u5C4F\u5207\u6362\u5931\u8D25", e.message.slice(0, 100));
     }
   }
   /** ===== 渲染 ===== */
   async renderAll() {
+    if (this.lastViewMode !== this.viewMode) {
+      this.messageScroll[this.lastViewMode] = this.msgContainer?.scrollTop ?? 0;
+      this.lastViewMode = this.viewMode;
+    }
     const prevScroll = this.messageScroll[this.viewMode];
     this.msgContainer.empty();
     const mode = this.viewMode;
@@ -47819,6 +47886,9 @@ var TutorView = class extends import_obsidian4.ItemView {
       if (this.busy) return;
       this.branchNext = true;
       this.branchOrigin = cur.summary || cur.rootQuestion || "";
+      this.branchFromSelection = false;
+      this.pendingAnchor = null;
+      this.updateChips();
       this.inputEl.value = "";
       this.inputEl.placeholder = "\u8F93\u5165\u65B0\u5206\u652F\u7684\u8D77\u70B9\u2026";
       this.inputEl.focus();
@@ -47851,13 +47921,14 @@ var TutorView = class extends import_obsidian4.ItemView {
     const fileThread = editorView?.file ? this.conv.reading.threads.find((t2) => !!t2.nodeFile && t2.nodeFile === editorView.file.path) ?? null : null;
     const active = activeThread(this.conv);
     const parentThread = active ? fileThread ?? active : null;
-    const isFromSelection = this.pendingAnchor !== null;
+    const isFromSelection = this.branchFromSelection || this.pendingAnchor !== null;
     const origin = this.branchOrigin || "";
     const originAnchor = isFromSelection ? this.pendingAnchor : void 0;
     const guide = this.pendingGuide;
     this.pendingAnchor = null;
     this.pendingGuide = null;
     this.branchNext = false;
+    this.branchFromSelection = false;
     this.branchOrigin = "";
     this.updateChips();
     const t = addThread(this.conv, {
@@ -47906,34 +47977,7 @@ var TutorView = class extends import_obsidian4.ItemView {
         }
       }
     }
-    let searchNote = "";
-    if (lastUser && this.plugin.settings.textbookSearchEnabled) {
-      this.setStatus("\u{1F50D} \u6B63\u5728\u6559\u6750\u68C0\u7D22\uFF08\u672C\u5730\u7D22\u5F15\u5B9A\u4F4D\u6559\u6750\u539F\u6587\uFF09\u2026");
-      const hit = await this.plugin.semanticTextbookSearch(lastUser.content);
-      if (hit.found) {
-        const stats = this.plugin.textbookIndexStats;
-        const cover = stats ? `\uFF08${stats.files} \u4E2A\u6587\u4EF6\u3001${stats.chunks} \u5757\uFF09` : "";
-        history.unshift({
-          role: "system",
-          content: [
-            `\u3010\u6559\u6750\u68C0\u7D22\u7ED3\u679C\u3011\u5DF2\u4ECE\u6559\u6750${cover}\u68C0\u7D22\u5230\u4EE5\u4E0B ${hit.count} \u5904\u6700\u76F8\u5173\u539F\u6587\uFF08\u6309\u76F8\u5173\u5EA6\u6392\u5E8F\uFF0C\u884C\u53F7\u53EF\u8DF3\u8F6C\u6838\u5BF9\uFF09\uFF1A`,
-            hit.text,
-            "",
-            "\u56DE\u7B54\u89C4\u5219\uFF1A",
-            "1. \u5F15\u7528\u6559\u6750\u5185\u5BB9\u65F6\u6807\u6CE8\u3010\u{1F4D6} \u5B8C\u6574\u8DEF\u5F84:\u884C\u3011\uFF0C\u8DEF\u5F84\u5FC5\u987B\u662F vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982\u3010\u{1F4D6} learning/peizhi/learn/_materials/math/\u5F20\u5B87\u57FA\u784030\u8BB2/chapters/\u7B2C6\u8BB2.md:364\u3011\uFF09\uFF0C\u7981\u6B62\u7B80\u5199\u6210\u6587\u4EF6\u540D\u3002",
-            "2. \u5F15\u7528\u672A\u8986\u76D6\u7684\u90E8\u5206\u57FA\u4E8E\u5DF2\u6709\u77E5\u8BC6\u56DE\u7B54\u5373\u53EF\uFF0C\u4E0D\u9700\u8981\u58F0\u660E\u300C\u6559\u6750\u672A\u76F4\u63A5\u5BF9\u5E94\u300D\u3002",
-            "3. \u4E0D\u7F16\u9020\u539F\u6587\u2014\u2014\u5F15\u7528\u7684\u6587\u5B57\u5FC5\u987B\u6765\u81EA\u4E0A\u9762\u7684\u6559\u6750\u5F15\u7528\u3002",
-            "4. \u5F53\u5B66\u751F\u8981\u6C42\u300C\u591A\u70B9\u5B9E\u4F8B/\u7C7B\u4F3C\u9898\u76EE/\u7C7B\u4F3C\u7684\u51FA\u9898\u601D\u60F3\u300D\u65F6\uFF0C\u4ECE\u4E0A\u9762\u7684\u5F15\u7528\u4E2D\u81F3\u5C11\u6311\u51FA 3 \u4E2A\u4EE5\u4E0A\u4E0D\u540C\u8BB2\u6B21\u7684\u5B9E\u4F8B\uFF0C\u6BCF\u4E2A\u5B9E\u4F8B\u90FD\u9644\u5F15\u7528\u3002"
-          ].join("\n")
-        });
-        searchNote = `\uFF08\u5DF2\u68C0\u7D22 ${hit.count} \u5904\u6559\u6750\u539F\u6587\uFF09`;
-      } else {
-        history.unshift({
-          role: "system",
-          content: "\u3010\u6559\u6750\u68C0\u7D22\u3011\u672C\u6B21\u672A\u5728\u6559\u6750\u4E2D\u5B9A\u4F4D\u5230\u4E0E\u95EE\u9898\u76F4\u63A5\u76F8\u5173\u7684\u539F\u6587\uFF08\u53EF\u80FD\u6559\u6750\u672A\u8986\u76D6\u8BE5\u5185\u5BB9\u6216\u8868\u8FF0\u5DEE\u5F02\uFF09\u3002\u8BF7\u76F4\u63A5\u57FA\u4E8E\u5DF2\u6709\u77E5\u8BC6\u6B63\u5E38\u56DE\u7B54\uFF0C\u4E0D\u8981\u58F0\u660E\u300C\u770B\u4E0D\u5230\u6559\u6750/\u6CA1\u6709\u6559\u6750\u76EE\u5F55/\u53EA\u80FD\u57FA\u4E8E\u622A\u56FE\u5206\u6790\u300D\u4E4B\u7C7B\u7684\u8BDD\u3002"
-        });
-      }
-    }
+    const searchNote = await this.injectTextbookSearch(history, lastUser);
     const lastUserThread = lastUser?.lineId ? this.conv.reading.threads.find((t) => t.id === lastUser.lineId) : null;
     const isFollowup = !!lastUserThread?.parentId;
     const branchInstr = branchInstruction(this.conv, isFollowup);
@@ -48103,6 +48147,38 @@ ${branchInstr}` : "";
     this.scrollToBottom();
   }
   /**
+   * 教材检索注入（respond / regenerate 共用）：检索结果只进本次请求的 system 上下文，
+   * 不进 conv.messages、不显示。返回状态栏文案（"" = 开关关闭/未命中）。
+   */
+  async injectTextbookSearch(history, userMsg) {
+    if (!userMsg || !this.plugin.settings.textbookSearchEnabled) return "";
+    this.setStatus("\u{1F50D} \u6B63\u5728\u6559\u6750\u68C0\u7D22\uFF08\u672C\u5730\u7D22\u5F15\u5B9A\u4F4D\u6559\u6750\u539F\u6587\uFF09\u2026");
+    const hit = await this.plugin.semanticTextbookSearch(userMsg.content);
+    if (hit.found) {
+      const stats = this.plugin.textbookIndexStats;
+      const cover = stats ? `\uFF08${stats.files} \u4E2A\u6587\u4EF6\u3001${stats.chunks} \u5757\uFF09` : "";
+      history.unshift({
+        role: "system",
+        content: [
+          `\u3010\u6559\u6750\u68C0\u7D22\u7ED3\u679C\u3011\u5DF2\u4ECE\u6559\u6750${cover}\u68C0\u7D22\u5230\u4EE5\u4E0B ${hit.count} \u5904\u6700\u76F8\u5173\u539F\u6587\uFF08\u6309\u76F8\u5173\u5EA6\u6392\u5E8F\uFF0C\u884C\u53F7\u53EF\u8DF3\u8F6C\u6838\u5BF9\uFF09\uFF1A`,
+          hit.text,
+          "",
+          "\u56DE\u7B54\u89C4\u5219\uFF1A",
+          "1. \u5F15\u7528\u6559\u6750\u5185\u5BB9\u65F6\u6807\u6CE8\u3010\u{1F4D6} \u5B8C\u6574\u8DEF\u5F84:\u884C\u3011\uFF0C\u8DEF\u5F84\u5FC5\u987B\u662F vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982\u3010\u{1F4D6} learning/peizhi/learn/_materials/math/\u5F20\u5B87\u57FA\u784030\u8BB2/chapters/\u7B2C6\u8BB2.md:364\u3011\uFF09\uFF0C\u7981\u6B62\u7B80\u5199\u6210\u6587\u4EF6\u540D\u3002",
+          "2. \u5F15\u7528\u672A\u8986\u76D6\u7684\u90E8\u5206\u57FA\u4E8E\u5DF2\u6709\u77E5\u8BC6\u56DE\u7B54\u5373\u53EF\uFF0C\u4E0D\u9700\u8981\u58F0\u660E\u300C\u6559\u6750\u672A\u76F4\u63A5\u5BF9\u5E94\u300D\u3002",
+          "3. \u4E0D\u7F16\u9020\u539F\u6587\u2014\u2014\u5F15\u7528\u7684\u6587\u5B57\u5FC5\u987B\u6765\u81EA\u4E0A\u9762\u7684\u6559\u6750\u5F15\u7528\u3002",
+          "4. \u5F53\u5B66\u751F\u8981\u6C42\u300C\u591A\u70B9\u5B9E\u4F8B/\u7C7B\u4F3C\u9898\u76EE/\u7C7B\u4F3C\u7684\u51FA\u9898\u601D\u60F3\u300D\u65F6\uFF0C\u4ECE\u4E0A\u9762\u7684\u5F15\u7528\u4E2D\u81F3\u5C11\u6311\u51FA 3 \u4E2A\u4EE5\u4E0A\u4E0D\u540C\u8BB2\u6B21\u7684\u5B9E\u4F8B\uFF0C\u6BCF\u4E2A\u5B9E\u4F8B\u90FD\u9644\u5F15\u7528\u3002"
+        ].join("\n")
+      });
+      return `\uFF08\u5DF2\u68C0\u7D22 ${hit.count} \u5904\u6559\u6750\u539F\u6587\uFF09`;
+    }
+    history.unshift({
+      role: "system",
+      content: "\u3010\u6559\u6750\u68C0\u7D22\u3011\u672C\u6B21\u672A\u5728\u6559\u6750\u4E2D\u5B9A\u4F4D\u5230\u4E0E\u95EE\u9898\u76F4\u63A5\u76F8\u5173\u7684\u539F\u6587\uFF08\u53EF\u80FD\u6559\u6750\u672A\u8986\u76D6\u8BE5\u5185\u5BB9\u6216\u8868\u8FF0\u5DEE\u5F02\uFF09\u3002\u8BF7\u76F4\u63A5\u57FA\u4E8E\u5DF2\u6709\u77E5\u8BC6\u6B63\u5E38\u56DE\u7B54\uFF0C\u4E0D\u8981\u58F0\u660E\u300C\u770B\u4E0D\u5230\u6559\u6750/\u6CA1\u6709\u6559\u6750\u76EE\u5F55/\u53EA\u80FD\u57FA\u4E8E\u622A\u56FE\u5206\u6790\u300D\u4E4B\u7C7B\u7684\u8BDD\u3002"
+    });
+    return "";
+  }
+  /**
    * 重新生成某条 AI 回答（网络波动/回答不佳时使用）：
    * 用该回答对应的提问重建历史（提问及其之前），流式重新生成并替换原回答。
    */
@@ -48146,6 +48222,7 @@ ${branchInstr}` : "";
         history.push({ role: "assistant", content: m.content });
       }
     }
+    const searchNote = await this.injectTextbookSearch(history, userMsg);
     const msgEl = this.msgContainer.querySelector(`[data-msg-index="${tIdx}"]`);
     const streamEl = msgEl ?? this.appendMessageRaw({ role: "assistant", content: "" });
     const contentEl = streamEl.querySelector(".edge-tutor-msg-content");
@@ -48175,7 +48252,7 @@ ${branchInstr}` : "";
       }
       await this.plugin.saveConv(this.conv);
       this.renderAll();
-      this.setStatus("\u{1F504} \u5DF2\u91CD\u65B0\u751F\u6210");
+      this.setStatus(`\u{1F504} \u5DF2\u91CD\u65B0\u751F\u6210${searchNote ? " " + searchNote : ""}`);
     } catch (e) {
       if (streamed) {
         target.content = streamed + `
@@ -48279,8 +48356,12 @@ ${branchInstr}` : "";
           content: `\u{1F9ED} ${scopeLabel}\u5185\u63A8\u8350\u7684\u9AD8\u4EF7\u503C\u5165\u53E3\uFF08\u81EA\u7531\u9009\u62E9\uFF0C\u53EF\u8DF3\u5165\uFF09\uFF1A`,
           guideEntries: entries
         });
+        const finalText = `\u{1F9ED} ${scopeLabel}\u5185\u63A8\u8350\u7684\u9AD8\u4EF7\u503C\u5165\u53E3\uFF08\u81EA\u7531\u9009\u62E9\uFF0C\u53EF\u8DF3\u5165\uFF09\uFF1A
+
+${answer}`;
         const gp = guidePartial;
-        if (gp) gp.content = answer;
+        if (gp) gp.content = finalText;
+        else pushMessage(this.conv, "assistant", finalText, { lineId: active?.id });
       }
       await this.plugin.saveConv(this.conv);
     } catch (e) {
@@ -48293,14 +48374,14 @@ ${branchInstr}` : "";
    * 沉淀一个线程为认知节点（每问一结点）。
    * - 幂等键 = 线程 nodeFile（持久化在 .conv.json）：已沉淀 → 原位更新；未沉淀 → 新建（同名自动 -2/-3）
    * - parentTitle 由 resolveParentTitle 解析（父线程已沉淀文件 → 线程标题 → 规范清洗标题）
-   * - 内部指令消息（🧭 开头的方向指引）跳过
+   * - 内部指令消息（🧭 开头的方向指引）跳过。返回是否实际写入（💾/清屏计数用）。
    */
   async sedimentThread(lineId, answerMsg) {
-    if (!lineId) return;
+    if (!lineId) return false;
     const t = this.conv.reading.threads.find((x) => x.id === lineId);
-    if (!t) return;
+    if (!t) return false;
     const question = t.rootQuestion || t.title || "";
-    if (!question || question.startsWith("\u{1F9ED}")) return;
+    if (!question || question.startsWith("\u{1F9ED}")) return false;
     let answer = answerMsg?.content ?? "";
     if (!answerMsg) {
       const lastAssistant = [...this.conv.messages].reverse().find(
@@ -48322,11 +48403,13 @@ ${branchInstr}` : "";
       title: makeNodeTitle(question),
       content: "",
       parentTitle: resolveParentTitle(parentThread ?? void 0, existingTitles),
-      anchor: { sourcePath: t.anchor?.sourcePath ?? "", quote: t.anchor?.quote ?? question.slice(0, 80) },
+      // 无锚点线程不再用问题文本冒充教材引文（假引文坑）：quote 留空
+      anchor: { sourcePath: t.anchor?.sourcePath ?? "", quote: t.anchor?.quote ?? "" },
       status: t.status,
       rootQuestion: question,
       summary: t.summary,
       response: answer,
+      mastery: t.mastery,
       workspace: this.currentWorkspace
     };
     const f = await this.plugin.createNode(node, { updatePath: t.nodeFile });
@@ -48334,6 +48417,7 @@ ${branchInstr}` : "";
     t.nodeFile = f.path;
     await this.plugin.saveConv(this.conv);
     if (isNew) this.setStatus(`\u5DF2\u81EA\u52A8\u6C89\u6DC0\uFF1A\u300C${f.basename}\u300D`);
+    return true;
   }
   /** 手动沉淀当前活跃线程（自动沉淀失败时的 💾 兜底） */
   async saveConversation() {
@@ -48344,6 +48428,14 @@ ${branchInstr}` : "";
     }
     await this.sedimentThread(active.id);
     new import_obsidian4.Notice("\u2705 \u8BA4\u77E5\u8282\u70B9\u5DF2\u6C89\u6DC0");
+  }
+  /** 沉淀全部线程（清屏前兜底）：根在前，保证 parentTitle 解析时父文件已存在 */
+  async sedimentAllThreads() {
+    let count2 = 0;
+    for (const t of orderedThreads(this.conv)) {
+      if (await this.sedimentThread(t.id)) count2++;
+    }
+    return count2;
   }
   /** 清屏确认：检测未沉淀对话 → 自动备份 → 清空 */
   async confirmClear() {
@@ -48359,9 +48451,10 @@ ${branchInstr}` : "";
       await this.doClear();
     };
     modal.onSaveAndClear = async () => {
-      await this.saveConversation();
+      const n = await this.sedimentAllThreads();
       await this.plugin.exportWorkspace("json");
       await this.doClear();
+      new import_obsidian4.Notice(`\u5DF2\u6C89\u6DC0 ${n} \u4E2A\u7EBF\u7A0B\u540E\u6E05\u5C4F`);
     };
     modal.open();
   }
@@ -49011,6 +49104,7 @@ ${branchInstr}` : "";
         suppressClick = false;
         return;
       }
+      void e;
     });
   }
   /** 选中文本浮动按钮 */
@@ -49057,12 +49151,52 @@ ${branchInstr}` : "";
     selBtn.addEventListener("click", async () => {
       const txt = selBtn.getAttribute("data-sel") || "";
       if (!txt) return;
+      const anchorPath = this.isSelectionInPanel() ? this.resolveSelectionAnchor() : this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)?.file?.path ?? null;
       document.getSelection()?.removeAllRanges();
       selBtn.style.display = "none";
-      this.receiveSelection(txt, this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)?.file?.path);
+      this.receiveSelection(txt, anchorPath ?? void 0);
     });
     document.addEventListener("selectionchange", updateSelFloat);
     this.registerInterval(window.setInterval(updateSelFloat, 500));
+  }
+  /** 当前选中是否发生在面板内（消息区），而非外部编辑器 */
+  isSelectionInPanel() {
+    const sel = document.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    return this.contentEl.contains(sel.getRangeAt(0).commonAncestorContainer);
+  }
+  /**
+   * 面板内选中文字的锚点解析：选中位置之前最近的引用按钮（【📖 文件:行】）→ 所属消息线程的锚点。
+   * 仅在面板内选中时调用；都找不到返回 null（原文仍会随问题发送，只是无可跳转路径）。
+   */
+  resolveSelectionAnchor() {
+    const sel = document.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const node = sel.getRangeAt(0).commonAncestorContainer;
+    const anchorNode = sel.anchorNode ?? node;
+    const msgEl = (node instanceof Element ? node : node.parentElement)?.closest?.(".edge-tutor-msg") ?? null;
+    if (!msgEl) return null;
+    let citePath = null;
+    const walker = document.createTreeWalker(msgEl, NodeFilter.SHOW_ELEMENT);
+    let cur = walker.nextNode();
+    while (cur) {
+      const el2 = cur;
+      if (el2.classList?.contains("edge-tutor-cite-btn")) {
+        if (el2.compareDocumentPosition(anchorNode) & Node.DOCUMENT_POSITION_PRECEDING) break;
+        const m = /^📖\s*(.+):(\d+)$/.exec(el2.textContent ?? "");
+        if (m) citePath = m[1].trim();
+      }
+      cur = walker.nextNode();
+    }
+    if (citePath) return citePath;
+    const idxAttr = msgEl.getAttribute("data-msg-index");
+    if (idxAttr !== null) {
+      const msg = this.conv.messages[parseInt(idxAttr, 10)];
+      const thread = msg?.lineId ? this.conv.reading.threads.find((t) => t.id === msg.lineId) : null;
+      if (thread?.anchor?.sourcePath) return thread.anchor.sourcePath;
+      if (msg?.anchor) return msg.anchor;
+    }
+    return null;
   }
   /** ===== 草稿 ===== */
   scheduleDraftSave() {
@@ -49081,6 +49215,7 @@ ${branchInstr}` : "";
       workspace: this.currentWorkspace,
       branchNext: this.branchNext,
       branchOrigin: this.branchOrigin,
+      fromSelection: this.branchFromSelection,
       nextAnchor: this.pendingAnchor
     };
     await this.plugin.saveSettings();
@@ -49094,11 +49229,12 @@ ${branchInstr}` : "";
     if (draft && draft.text && draft.workspace === this.currentWorkspace) {
       this.inputEl.value = draft.text;
       this.pendingAnchor = draft.nextAnchor ?? null;
+      this.branchFromSelection = draft.fromSelection ?? false;
       if (draft.branchNext) {
         this.branchNext = true;
         this.branchOrigin = draft.branchOrigin || "";
         this.inputEl.placeholder = "\u8F93\u5165\u65B0\u5206\u652F\u7684\u8D77\u70B9\u2026";
-      } else if (this.pendingAnchor && this.branchOrigin) {
+      } else if ((this.pendingAnchor || this.branchFromSelection) && this.branchOrigin) {
         this.inputEl.placeholder = "\u57FA\u4E8E\u9009\u4E2D\u6587\u5B57\u7EE7\u7EED\u8FFD\u95EE\u2026";
       } else {
         this.inputEl.placeholder = "\u7EE7\u7EED\u8FD9\u6761\u601D\u8DEF\u2026";
@@ -49200,6 +49336,9 @@ ${branchInstr}` : "";
           this.pendingGuide = e;
           this.branchNext = false;
           this.branchOrigin = "";
+          this.branchFromSelection = false;
+          this.pendingAnchor = null;
+          this.updateChips();
           this.inputEl.value = e.question || e.title;
           this.inputEl.placeholder = "\u53EF\u4EE5\u6539\u5199\u8FD9\u4E2A\u95EE\u9898\uFF0C\u7136\u540E\u53D1\u9001\u2026";
           this.inputEl.focus();
@@ -49509,6 +49648,7 @@ var ScopeModal = class extends import_obsidian4.Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
+    this.scope.register([], "Escape", () => this.closeResolve(null));
     contentEl.createEl("h3", { text: "\u65B9\u5411\u6307\u5F15\u8BBE\u7F6E" });
     contentEl.createEl("div", {
       text: "\u5148\u9009\u6A21\u5F0F\uFF08\u70B9\u51FB\u9AD8\u4EAE\uFF09\uFF0C\u518D\u9009\u8303\u56F4\u786E\u5B9A\u3002\u4E0D\u9009\u6A21\u5F0F\u5219\u9ED8\u8BA4\u6DF7\u5408\u3002",
@@ -50195,9 +50335,21 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const folder = this.workspaceFolderPathOf(ws3);
     await this.ensureFolder(folder);
     const content = node.content || buildNodeContent(node);
-    if (opts?.updatePath && opts.updatePath.startsWith(folder + "/")) {
-      const target = this.app.vault.getAbstractFileByPath(opts.updatePath);
-      if (target instanceof import_obsidian6.TFile) {
+    if (opts?.updatePath) {
+      const up = opts.updatePath.replace(/\\/g, "/");
+      let target = null;
+      if (up.startsWith(folder + "/")) {
+        const f2 = this.app.vault.getAbstractFileByPath(up);
+        if (f2 instanceof import_obsidian6.TFile) target = f2;
+      }
+      if (!target) {
+        const base = up.split("/").pop() ?? "";
+        const dir = this.app.vault.getAbstractFileByPath(folder);
+        if (base && dir instanceof import_obsidian6.TFolder) {
+          target = dir.children.find((c) => c instanceof import_obsidian6.TFile && c.name === base) ?? null;
+        }
+      }
+      if (target) {
         await this.app.vault.modify(target, content);
         await this.updateMoc(ws3);
         return target;
@@ -50270,6 +50422,20 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     if (oldFolder instanceof import_obsidian6.TFolder) {
       try {
         await this.app.vault.rename(oldFolder, newPath);
+        try {
+          const conv = await this.loadConv(finalId);
+          let changed = false;
+          for (const t of conv.reading.threads) {
+            const nf = t.nodeFile?.replace(/\\/g, "/");
+            if (nf && nf.startsWith(oldPath + "/")) {
+              t.nodeFile = newPath + nf.slice(oldPath.length);
+              changed = true;
+            }
+          }
+          if (changed) await this.saveConv(conv);
+        } catch (e) {
+          console.warn("[edge-tutor] renameWorkspace \u66F4\u65B0 nodeFile \u5931\u8D25", e.message.slice(0, 100));
+        }
         return finalId;
       } catch (e) {
         new import_obsidian6.Notice("\u91CD\u547D\u540D\u5931\u8D25\uFF1A" + e.message.slice(0, 80));
@@ -50288,10 +50454,8 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     if (ids.size === 0) return 0;
     const conv = await this.loadConv(workspace);
     let deleted = 0;
-    const titles = [];
     const threads = conv.reading.threads.filter((t) => ids.has(t.id));
     for (const t of threads) {
-      titles.push(t.title || t.rootQuestion || "");
       conv.reading.threads = conv.reading.threads.filter((x) => x.id !== t.id);
       deleted++;
     }
@@ -50301,24 +50465,41 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     }
     await this.saveConv(conv);
     const folder = this.workspaceFolderPathOf(workspace);
-    for (const title of titles) {
-      if (!title) continue;
-      let f = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
-      if (!(f instanceof import_obsidian6.TFile)) {
-        const dir = this.app.vault.getAbstractFileByPath(folder);
-        if (dir instanceof import_obsidian6.TFolder) {
-          for (const child of dir.children) {
-            if (!(child instanceof import_obsidian6.TFile) || !child.name.endsWith(".md")) continue;
-            if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
-            try {
-              const content = await this.app.vault.cachedRead(child);
-              const node = parseNodeFromContent(child.basename, content, child.path);
-              if (node.title === title || node.rootQuestion === title) {
-                f = child;
-                break;
-              }
-            } catch (e) {
+    const dir = this.app.vault.getAbstractFileByPath(folder);
+    for (const t of threads) {
+      const title = t.title || t.rootQuestion || "";
+      let f = null;
+      const cands = [];
+      const nf = t.nodeFile?.replace(/\\/g, "/");
+      if (nf) {
+        cands.push(nf);
+        const base = nf.split("/").pop() ?? "";
+        if (base) cands.push(`${folder}/${base}`);
+      }
+      if (title) {
+        cands.push(`${folder}/${title}.md`);
+        cands.push(`${folder}/${makeNodeTitle(title)}.md`);
+      }
+      for (const p of cands) {
+        if (!p || p.endsWith("/.md")) continue;
+        const hit = this.app.vault.getAbstractFileByPath(p);
+        if (hit instanceof import_obsidian6.TFile) {
+          f = hit;
+          break;
+        }
+      }
+      if (!f && dir instanceof import_obsidian6.TFolder) {
+        for (const child of dir.children) {
+          if (!(child instanceof import_obsidian6.TFile) || !child.name.endsWith(".md")) continue;
+          if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
+          try {
+            const content = await this.app.vault.cachedRead(child);
+            const node = parseNodeFromContent(child.basename, content, child.path);
+            if (node.title === title || node.rootQuestion === title) {
+              f = child;
+              break;
             }
+          } catch (e) {
           }
         }
       }
@@ -50328,6 +50509,8 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
         } catch (e) {
           console.warn("[edge-tutor] \u8282\u70B9\u6587\u4EF6\u5220\u9664\u5931\u8D25", title, e);
         }
+      } else {
+        console.warn("[edge-tutor] \u672A\u5B9A\u4F4D\u5230\u8282\u70B9\u6587\u4EF6\uFF08\u53EF\u80FD\u5DF2\u624B\u52A8\u5220\u9664\uFF09", title || t.id);
       }
     }
     return deleted;
@@ -50538,11 +50721,30 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
   }
   /**
    * 设置节点封顶标记（🔒）：同步写入节点 frontmatter（持久化，重建会话时恢复）。
-   * 节点文件不存在时仅返回 false（不强制）。
+   * 标题 ≠ 文件 basename（✏️ 改名 / 长问题截断 / agent 命名）时逐级兜底定位节点文件；
+   * 定位失败仅返回 false（不强制）。
    */
   async setNodeLocked(workspace, title, locked) {
     const folder = this.workspaceFolderPathOf(workspace);
-    const f = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
+    let f = null;
+    const direct = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
+    if (direct instanceof import_obsidian6.TFile) f = direct;
+    const dir = this.app.vault.getAbstractFileByPath(folder);
+    if (!f && dir instanceof import_obsidian6.TFolder) {
+      for (const child of dir.children) {
+        if (!(child instanceof import_obsidian6.TFile) || !child.name.endsWith(".md")) continue;
+        if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
+        try {
+          const content = await this.app.vault.cachedRead(child);
+          const node = parseNodeFromContent(child.basename, content, child.path);
+          if (node.title === title || node.rootQuestion === title) {
+            f = child;
+            break;
+          }
+        } catch (e) {
+        }
+      }
+    }
     if (!(f instanceof import_obsidian6.TFile)) return false;
     try {
       const content = await this.app.vault.read(f);
@@ -50552,9 +50754,11 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       if (locked) {
         next = content.replace(/^---\n([\s\S]*?)\n---/, (_m, body) => `---
 ${body}${body.trimEnd().endsWith("\n") ? "" : "\n"}locked: true
+mastery: mastered
 ---`);
       } else {
         next = content.replace(/^locked:\s*true\n/m, "");
+        next = next.replace(/^mastery:\s*mastered\n/m, "mastery: exploring\n");
       }
       if (next === content) return false;
       await this.app.vault.modify(f, next);
@@ -50878,19 +51082,19 @@ ${summary.summaryText}`);
             ranked = top40.map((m, i) => ({ ref: m.ref, score: scores[i] ?? 0 })).sort((x, y) => y.score - x.score);
             const keptRefs = aRefs.filter((a) => ranked.some((m) => m.ref.file === a.file && a.startLine >= m.ref.startLine && a.startLine <= m.ref.endLine)).slice(0, 2);
             const keepSources = [...keptRefs, ...vecHits.slice(0, 2)];
+            const keptKeys = /* @__PURE__ */ new Set();
+            const keptItems = [];
             if (keepSources.length > 0) {
-              const keptKeys = /* @__PURE__ */ new Set();
-              const keptItems2 = [];
               for (const a of keepSources) {
                 const m = ranked.find((x) => x.ref.file === a.file && a.startLine >= x.ref.startLine && a.startLine <= x.ref.endLine);
                 if (!m) continue;
                 const key = `${m.ref.file}:${m.ref.startLine}`;
                 if (keptKeys.has(key)) continue;
                 keptKeys.add(key);
-                keptItems2.push({ ref: m.ref, score: 1.01 });
+                keptItems.push({ ref: m.ref, score: 1.01 });
               }
-              if (keptItems2.length > 0) {
-                ranked = [...keptItems2, ...ranked.filter((m) => !keptKeys.has(`${m.ref.file}:${m.ref.startLine}`))];
+              if (keptItems.length > 0) {
+                ranked = [...keptItems, ...ranked.filter((m) => !keptKeys.has(`${m.ref.file}:${m.ref.startLine}`))];
               }
             }
             console.info(`[edge-tutor] \u6761\u4EF6 rerank\uFF1A${top40.length} \u5019\u9009 \u2192 top${Math.min(ranked.length, 6)}${keptItems.length > 0 ? `\uFF08\u4FDD\u5E95 ${keptItems.length} \u6761\u5B50\u4E32\u7CBE\u786E\u547D\u4E2D\uFF09` : ""}`);
@@ -51324,7 +51528,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       );
     }
     containerEl.createEl("h3", { text: "\u{1F4AC} \u5BF9\u8BDD\uFF08\u4EF7\u503C\u8BC6\u522B\u5668\uFF09\u901A\u9053" });
-    new import_obsidian6.Setting(containerEl).setName("Provider").setDesc("\u9009\u62E9 API \u63D0\u4F9B\u5546\uFF08\u9884\u8BBE\uFF1ADeepSeek \u5B98\u65B9 / Tokeness-Claude / Tokeness-GPT / Zhuomatech\uFF09\u3002\u5207\u6362\u540E\u81EA\u52A8\u586B\u5145\u5730\u5740\u3001\u5BC6\u94A5\u4E0E\u6A21\u578B\u3002").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(containerEl).setName("Provider").setDesc("\u9009\u62E9 API \u63D0\u4F9B\u5546\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587\u5BC6\u94A5\uFF1A\u5207\u6362\u540E\u81EA\u52A8\u586B\u5145\u5730\u5740\u4E0E\u6A21\u578B\uFF0C\u5BC6\u94A5\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF08\u89C1\u4E0B\u65B9\u5BC6\u94A5\u72B6\u6001\uFF09\uFF0C\u4E5F\u53EF\u624B\u52A8\u586B\u5199\u3002").addDropdown((dropdown) => {
       for (const p of PRESET_PROVIDERS) {
         dropdown.addOption(p.id, p.name);
       }
@@ -51361,13 +51565,56 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("API Key").setDesc("\u5F53\u524D Provider \u7684\u5BC6\u94A5\uFF08\u5207\u6362 Provider \u81EA\u52A8\u586B\u5145\uFF0C\u53EF\u624B\u52A8\u6539\uFF1B\u4EC5\u5B58\u672C\u5730 data.json\uFF09").addText((text) => {
+    new import_obsidian6.Setting(containerEl).setName("API Key").setDesc("\u5F53\u524D Provider \u7684\u5BC6\u94A5\uFF08\u4EC5\u5B58\u672C\u5730 data.json\uFF09\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587 key\uFF1A\u5207\u6362 Provider \u540E\u8FD9\u91CC\u4E3A\u7A7A\uFF0C\u5BC6\u94A5\u81EA\u52A8\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF1Bchat2api \u53CD\u4EE3 JWT \u4ECD\u53EF\u5728\u6B64\u586B\u5199\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey).onChange(async (v) => {
         this.plugin.settings.apiKey = v.trim();
         await this.plugin.saveSettings();
       });
     });
+    (() => {
+      const activeProvider = PRESET_PROVIDERS.find((p) => p.id === this.plugin.settings.activeProvider) ?? PRESET_PROVIDERS[0];
+      const keySource = (() => {
+        if (this.plugin.settings.apiKey && this.plugin.settings.apiKey.trim()) {
+          return "\u{1F511} \u8BBE\u7F6E\u4E2D\u7684\u663E\u5F0F\u5BC6\u94A5\uFF08data.json\uFF09";
+        }
+        if (activeProvider.keyEnv && readEnv(activeProvider.keyEnv)) {
+          return "\u{1F30D} \u73AF\u5883\u53D8\u91CF " + activeProvider.keyEnv;
+        }
+        const g = this.plugin.settings.apiKeyEnv || "EDGE_TUTOR_API_KEY";
+        if (readEnv(g)) {
+          return "\u{1F30D} \u5168\u5C40\u73AF\u5883\u53D8\u91CF " + g;
+        }
+        return "\u26A0\uFE0F \u672A\u914D\u7F6E\u5BC6\u94A5";
+      })();
+      new import_obsidian6.Setting(containerEl).setName("\u5BC6\u94A5\u72B6\u6001").setDesc(
+        "\u5F53\u524D Provider\uFF08" + activeProvider.name + "\uFF09\uFF1A" + keySource + "\u3002\u73AF\u5883\u53D8\u91CF\u4E3A\u7A7A\u7684 Provider\uFF0C\u5207\u6362\u540E\u9700\u5728\u672C\u673A\u8BBE\u7F6E\u5BF9\u5E94\u73AF\u5883\u53D8\u91CF\u6216\u5728\u4E0A\u65B9\u624B\u52A8\u586B\u5199\u3002"
+      ).addButton(
+        (btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
+          btn.setButtonText("\u6D4B\u8BD5\u4E2D\u2026");
+          btn.setDisabled(true);
+          const ctrl = new AbortController();
+          const timer = window.setTimeout(() => ctrl.abort(), 15e3);
+          try {
+            await chatCompletion(
+              this.plugin.settings,
+              [{ role: "user", content: "ping" }],
+              { maxTokens: 4, signal: ctrl.signal }
+            );
+            new import_obsidian6.Notice("\u2705 \u8FDE\u63A5\u6210\u529F\uFF1A" + activeProvider.name);
+          } catch (e) {
+            new import_obsidian6.Notice(
+              "\u274C \u8FDE\u63A5\u5931\u8D25\uFF1A" + (e instanceof Error ? e.message.slice(0, 200) : String(e)),
+              8e3
+            );
+          } finally {
+            window.clearTimeout(timer);
+            btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5");
+            btn.setDisabled(false);
+          }
+        })
+      );
+    })();
     new import_obsidian6.Setting(containerEl).setName("\u56DE\u7B54\u957F\u5EA6\uFF08max_tokens\uFF09").setDesc("\u56DE\u7B54\u6700\u5927 token \u6570\u3002\u8D8A\u5927\u56DE\u7B54\u8D8A\u957F\uFF08\u9ED8\u8BA4 4096\uFF09\u3002").addText(
       (text) => text.setPlaceholder("4096").setValue(String(this.plugin.settings.maxTokens ?? 4096)).onChange(async (v) => {
         const n = parseInt(v, 10);

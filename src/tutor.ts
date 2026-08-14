@@ -26,6 +26,12 @@ export interface CognitiveNode {
   filePath?: string;
   /** 此链封顶（🔒）：导引不深化此链。持久化在节点 frontmatter，重建会话时恢复 */
   locked?: boolean;
+  /** 掌握深度（mastered=封顶同义；exploring/fresh 也持久化，重建不丢） */
+  mastery?: "mastered" | "exploring" | "fresh";
+  /** 触发问题的原文摘录（持久化，重建后「由上一段文字引出」不丢） */
+  originExcerpt?: string;
+  /** 节点创建日期（YYYY-MM-DD，重建时恢复线程 createdAt） */
+  created?: string;
   /** 写入目标工作区（可空，默认当前工作区） */
   workspace?: string;
 }
@@ -52,10 +58,13 @@ export function buildNodeContent(node: CognitiveNode): string {
   lines.push("type: 认知节点");
   lines.push("status: " + node.status);
   lines.push("created: " + new Date().toISOString().slice(0, 10));
-  lines.push('anchor: "' + node.anchor.quote.slice(0, 80) + '"');
-  if (node.anchor.sourcePath) lines.push('anchorPath: "' + node.anchor.sourcePath + '"');
+  // 引文/路径里的 ASCII 双引号会打断 YAML 值（此前 anchor 未转义）→ 统一转单引号
+  lines.push('anchor: "' + node.anchor.quote.slice(0, 80).replace(/"/g, "'") + '"');
+  if (node.anchor.sourcePath) lines.push('anchorPath: "' + node.anchor.sourcePath.replace(/"/g, "'") + '"');
   if (node.parentTitle) lines.push('parent: "[[' + node.parentTitle + ']]"');
   if (node.summary) lines.push('summary: "' + node.summary.replace(/"/g, "'").slice(0, 120) + '"');
+  if (node.originExcerpt) lines.push('originExcerpt: "' + node.originExcerpt.replace(/"/g, "'").replace(/\r?\n/g, " ").slice(0, 200) + '"');
+  if (node.mastery && node.mastery !== "fresh") lines.push("mastery: " + node.mastery);
   if (node.locked) lines.push("locked: true");
   lines.push("---");
   lines.push("");
@@ -102,6 +111,9 @@ export function parseNodeFromContent(title: string, content: string, sourcePath:
   const summaryMatch = content.match(/^summary:\s*"([^"]*)"/m);
   const anchorPathMatch = content.match(/^anchorPath:\s*"([^"]*)"/m);
   const lockedMatch = content.match(/^locked:\s*true/m);
+  const masteryMatch = content.match(/^mastery:\s*(mastered|exploring|fresh)/m);
+  const originExcerptMatch = content.match(/^originExcerpt:\s*"([^"]*)"/m);
+  const createdMatch = content.match(/^created:\s*"?(\d{4}-\d{2}-\d{2})"?/m);
 
   // 追问区（## 🔍 追问 之后，到下一个 ## 之前）；占位符/空内容不视为真实问题（防误捕获）
   let rootQuestion: string | undefined;
@@ -116,6 +128,7 @@ export function parseNodeFromContent(title: string, content: string, sourcePath:
   const full = extractMentorResponse(content);
   if (full) summary = full.slice(0, 300);
 
+  const mastery = masteryMatch?.[1] as "mastered" | "exploring" | "fresh" | undefined;
   return {
     title,
     content,
@@ -127,7 +140,11 @@ export function parseNodeFromContent(title: string, content: string, sourcePath:
     status: status as "active" | "paused",
     rootQuestion,
     summary: summaryMatch?.[1] ?? summary,
-    locked: !!lockedMatch,
+    // locked 真源是 locked 行；mastery: mastered 视为封顶（setNodeLocked 双写，老数据兼容）
+    locked: !!lockedMatch || mastery === "mastered",
+    mastery,
+    originExcerpt: originExcerptMatch?.[1] || undefined,
+    created: createdMatch?.[1] || undefined,
   };
 }
 

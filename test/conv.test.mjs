@@ -266,3 +266,43 @@ test("cognitiveMapSummary：缩进树 + 封顶标记 + 摘要", () => {
   assert.ok(lines[2].startsWith("    └─ 直和分解"));
   assert.ok(lines[2].includes("🔒 封顶"));
 });
+
+test("pushMessage：连续消息 id 不重复（同毫秒碰撞修复）", () => {
+  const conv = freshConv("w");
+  const a = pushMessage(conv, "user", "a");
+  const b = pushMessage(conv, "assistant", "b");
+  assert.notEqual(a.id, b.id);
+});
+
+test("buildConvFromNodes：同名节点不再共享线程 id", () => {
+  const nodes = [
+    { title: "同名", parentTitle: undefined, status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "a", summary: "" },
+    { title: "同名", parentTitle: undefined, status: "active", anchor: { sourcePath: "", quote: "" }, rootQuestion: "b", summary: "" },
+  ];
+  const conv = buildConvFromNodes(nodes, "main");
+  const ids = conv.reading.threads.map((t) => t.id);
+  assert.equal(new Set(ids).size, 2);
+});
+
+test("buildConvFromNodes：恢复 originExcerpt / mastery / created（重建不丢原文摘录与状态）", () => {
+  const nodes = [
+    {
+      title: "A", parentTitle: undefined, status: "active",
+      anchor: { sourcePath: "", quote: "" }, rootQuestion: "q", summary: "s",
+      originExcerpt: "某段原文", mastery: "exploring", created: "2026-08-10",
+    },
+  ];
+  const conv = buildConvFromNodes(nodes, "main");
+  const t = conv.reading.threads[0];
+  assert.equal(t.originExcerpt, "某段原文");
+  assert.equal(t.mastery, "exploring");
+  assert.ok(t.createdAt.startsWith("2026-08-10"));
+});
+
+test("buildConvFromNodes：mastery=mastered 视为封顶（setNodeLocked 双写兼容）", () => {
+  const nodes = [
+    { title: "封顶", parentTitle: undefined, status: "active", locked: false, mastery: "mastered", anchor: { sourcePath: "", quote: "" }, rootQuestion: "q", summary: "" },
+  ];
+  const conv = buildConvFromNodes(nodes, "main");
+  assert.equal(conv.reading.threads[0].mastery, "mastered");
+});

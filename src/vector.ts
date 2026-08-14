@@ -130,7 +130,8 @@ export function loadReranker(cacheDir: string, wasmDir?: string): Promise<Rerank
           // 由 Chromium 处理，file:// 模块被拒（"Failed to fetch dynamically imported module"）。
           // 置空后 ORT 走 bundle 内联的 node factory（require 分支，零外部 import），
           // wasmBinary 直给，Node 与 Chromium 两条环境都通。
-          tf.env.backends.onnx.wasm.wasmPaths = null;
+          // （undefined 与 null 同效：transformers 里 wasmPaths 按 truthiness/typeof 判定）
+          tf.env.backends.onnx.wasm.wasmPaths = undefined;
           tf.env.backends.onnx.wasm.numThreads = 1;
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const fs = require("fs");
@@ -235,7 +236,8 @@ export function loadEmbedder(cacheDir: string, wasmDir?: string): Promise<Embedd
           // 由 Chromium 处理，file:// 模块被拒（"Failed to fetch dynamically imported module"）。
           // 置空后 ORT 走 bundle 内联的 node factory（require 分支，零外部 import），
           // wasmBinary 直给，Node 与 Chromium 两条环境都通。
-          tf.env.backends.onnx.wasm.wasmPaths = null;
+          // （undefined 与 null 同效：transformers 里 wasmPaths 按 truthiness/typeof 判定）
+          tf.env.backends.onnx.wasm.wasmPaths = undefined;
           tf.env.backends.onnx.wasm.numThreads = 1;
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const fs = require("fs");

@@ -22,7 +22,7 @@ import { mindMapLayout, layoutToCoordinates, buildEdgePath, MindMapThread } from
 import { NoteSuggest } from "./suggest";
 import {
   Conv, ConvMessage, ConvThread, freshConv, pushMessage, addThread, ancestry, activeThread,
-  collectSubtree, reparentThread, switchThread, pauseActive, removeThread, removeMessage,
+  collectSubtree, reparentThread, switchThread, pauseActive, removeMessage, orderedThreads,
   messagesForView, messageLineId, searchConversation, branchInstruction, finishAnswer,
   cognitiveMapSummary, serializeConv, resolveParentTitle,
 } from "./conv";
@@ -55,6 +55,8 @@ export interface TutorPlugin {
   setNodeLocked: (workspace: string, title: string, locked: boolean) => Promise<boolean>;
   buildGlobalMapText: () => Promise<{ text: string; locked: string[]; total: number }>;
   semanticTextbookSearch: (query: string) => Promise<SearchHit>;
+  /** 教材向量索引统计（注入 prompt 说明检索覆盖范围；索引未加载 → null） */
+  readonly textbookIndexStats: { files: number; chunks: number } | null;
   activateAgentView: () => Promise<void>;
   ensureOpenCodeServer: () => Promise<{ ok: boolean; message: string }>;
 }
@@ -77,6 +79,8 @@ export interface CognitiveNodeLike {
   summary?: string;
   /** 完整回答正文（导师回应区写入源） */
   response?: string;
+  /** 掌握深度（随 frontmatter 持久化，重建不丢） */
+  mastery?: "mastered" | "exploring" | "fresh";
   workspace?: string;
 }
 
@@ -119,6 +123,12 @@ export class TutorView extends ItemView {
   private branchOrigin = "";
   /** 待发送的原文锚点（由此追问选中，发送时使用） */
   private pendingAnchor: string | null = null;
+  /**
+   * 选中追问标记（与 pendingAnchor 解耦）：
+   * 面板内选中（如选中回答里的文字）可能没有可解析的教材路径（pendingAnchor 为空），
+   * 但选中原文仍必须随问题进 prompt，否则回答会与选中内容脱节。
+   */
+  private branchFromSelection = false;
   /** 已选中的方向导引入口，发送前允许用户改写 */
   private pendingGuide: GuideEntry | null = null;
   private branchClipboard: ConvThread[] = [];
@@ -135,6 +145,10 @@ export class TutorView extends ItemView {
   private branchClipboardMessages: ConvMessage[] = [];
   /** 消息滚动位置（按视图模式记忆） */
   private messageScroll: Record<string, number> = {};
+  /** 上一次渲染的视图模式（切换时记住旧模式滚动位置） */
+  private lastViewMode: ViewMode = "path";
+  /** 宽屏切换 detach 标记：onClose 不把旧会话写回磁盘（避免覆盖新面板刚加载的 conv） */
+  private detachingForMove = false;
   /** 懒渲染窗口起点（按视图模式记忆，P2-6）：只渲染 [loadedStart, total) */
   private loadedStart: Record<string, number> = {};
   /** 上一帧活跃线程 id（用于导图自动定位） */
@@ -456,7 +470,8 @@ export class TutorView extends ItemView {
 
   async onClose() {
     await this.flushDraft();
-    await this.plugin.saveConv(this.conv);
+    // 宽屏切换的 detach 不写回旧会话（新面板已从磁盘加载更新后的 conv）
+    if (!this.detachingForMove) await this.plugin.saveConv(this.conv);
     if (this.selBtn) this.selBtn.remove();
     // 释放外部修改监听
     if (this.modifyRef) {
@@ -507,6 +522,7 @@ export class TutorView extends ItemView {
    */
   receiveSelection(selection: string, sourcePath?: string) {
     // 存为"由这段文字引出"的来源（Zotero branchOrigin）
+    this.branchFromSelection = true;
     this.branchOrigin = selection;
     this.branchNext = false;
     this.inputEl.value = "";
@@ -530,27 +546,31 @@ export class TutorView extends ItemView {
   private updateChips() {
     if (!this.chipsEl) return;
     this.chipsEl.empty();
-    if (!this.pendingAnchor) {
+    if (!this.pendingAnchor && !this.branchFromSelection) {
       this.chipsEl.style.display = "none";
       return;
     }
-    const src = this.pendingAnchor;
+    const src = this.pendingAnchor ?? "";
     const file = src.split("/").pop() ?? src;
     const quote = (this.branchOrigin || "").replace(/\s+/g, " ").trim().slice(0, 30);
-    const chip = this.chipsEl.createEl("button", { cls: "edge-tutor-context-chip", attr: { title: "点击跳转到原文位置" } });
-    const label = chip.createSpan({ text: `📖 ${file}${quote ? `：${quote}` : ""}` });
+    const chip = this.chipsEl.createEl("button", {
+      cls: "edge-tutor-context-chip",
+      attr: { title: src ? "点击跳转到原文位置" : "面板内选中文字（无可跳转的教材路径）" },
+    });
+    const label = chip.createSpan({ text: `${src ? `📖 ${file}` : "📖 面板选中"}${quote ? `：${quote}` : ""}` });
     label.addClass("edge-tutor-chip-text");
     const x = chip.createEl("span", { text: "×", cls: "edge-tutor-chip-x", attr: { title: "移除引用（该消息将不带锚点发送）" } });
     x.addEventListener("click", (e) => {
       e.stopPropagation();
       this.pendingAnchor = null;
       this.branchOrigin = "";
+      this.branchFromSelection = false;
       this.inputEl.placeholder = "追问或提问…（Enter 发送，Shift+Enter 换行）";
       this.updateChips();
       this.setStatus("已移除引用来源");
     });
     chip.addEventListener("click", () => {
-      if (this.pendingAnchor) void this.navigateToTextAnchor(this.pendingAnchor, this.branchOrigin || undefined);
+      if (src) void this.navigateToTextAnchor(src, this.branchOrigin || undefined);
     });
     this.chipsEl.style.display = "flex";
   }
@@ -566,18 +586,33 @@ export class TutorView extends ItemView {
     await this.plugin.saveConv(this.conv);
     const root = leaf.getRoot();
     const inSidebar = root === this.app.workspace.leftSplit || root === this.app.workspace.rightSplit;
-    if (inSidebar) {
-      // 从侧栏移到主编辑区（tab = 独立标签页，全宽）
-      const newLeaf = this.app.workspace.getLeaf("tab");
-      await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
-      this.app.workspace.revealLeaf(newLeaf);
-      this.setStatus("宽屏模式：面板已移到主编辑区。再次点 ⛶ 可回到侧栏。");
-    } else {
-      // 从主编辑区移回右侧边栏
-      const newLeaf = this.app.workspace.getRightLeaf(false);
-      if (!newLeaf) return;
-      await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
-      this.app.workspace.revealLeaf(newLeaf);
+    // 旧叶子 detach 前标记：onClose 不再把旧会话写回（避免覆盖新面板刚加载的 conv）；
+    // 不 detach 旧叶子会留下第二个存活面板（双 watcher/双浮动按钮/并发写盘竞态）
+    this.detachingForMove = true;
+    try {
+      if (inSidebar) {
+        // 从侧栏移到主编辑区（tab = 独立标签页，全宽）
+        const newLeaf = this.app.workspace.getLeaf("tab");
+        await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
+        this.app.workspace.revealLeaf(newLeaf);
+        await leaf.detach();
+        this.setStatus("宽屏模式：面板已移到主编辑区。再次点 ⛶ 可回到侧栏。");
+      } else {
+        // 从主编辑区移回右侧边栏
+        const newLeaf = this.app.workspace.getRightLeaf(false);
+        if (!newLeaf) {
+          this.detachingForMove = false;
+          return;
+        }
+        await newLeaf.setViewState({ ...state, type: VIEW_TYPE_TUTOR, active: true });
+        this.app.workspace.revealLeaf(newLeaf);
+        await leaf.detach();
+        this.setStatus("面板已回到右侧边栏。");
+      }
+    } catch (e) {
+      // 失败恢复标记，面板保持原地
+      this.detachingForMove = false;
+      console.warn("[edge-tutor] 宽屏切换失败", (e as Error).message.slice(0, 100));
     }
   }
 
@@ -585,6 +620,11 @@ export class TutorView extends ItemView {
 
   private async renderAll() {
     // 消息区（按视图模式）
+    // 模式切换时记住上一模式的滚动位置（此前 messageScroll 只读不写，记忆从未生效）
+    if (this.lastViewMode !== this.viewMode) {
+      this.messageScroll[this.lastViewMode] = this.msgContainer?.scrollTop ?? 0;
+      this.lastViewMode = this.viewMode;
+    }
     const prevScroll = this.messageScroll[this.viewMode];
     this.msgContainer.empty();
     const mode = this.viewMode;
@@ -829,6 +869,10 @@ export class TutorView extends ItemView {
       if (this.busy) return;
       this.branchNext = true;
       this.branchOrigin = cur.summary || cur.rootQuestion || "";
+      // 分叉意图覆盖此前的选中追问（选中来源不再生效）
+      this.branchFromSelection = false;
+      this.pendingAnchor = null;
+      this.updateChips();
       this.inputEl.value = "";
       this.inputEl.placeholder = "输入新分支的起点…";
       this.inputEl.focus();
@@ -873,14 +917,17 @@ export class TutorView extends ItemView {
     const active = activeThread(this.conv);
     // 显式搁置（activeId=null，回主干）时尊重主干语义，不自动挂到打开的结点下
     const parentThread = active ? (fileThread ?? active) : null;
-    // 由此追问来源（选中原文）优先于分支按钮的 branchOrigin
-    const isFromSelection = this.pendingAnchor !== null;
+    // 由此追问来源（选中原文）优先于分支按钮的 branchOrigin。
+    // 面板内选中（如选中回答里的文字）可能没有可解析的教材路径（pendingAnchor 为空），
+    // 用 branchFromSelection 标记保证原文仍随问题进 prompt，否则回答与选中内容脱节。
+    const isFromSelection = this.branchFromSelection || this.pendingAnchor !== null;
     const origin = this.branchOrigin || "";
     const originAnchor = isFromSelection ? this.pendingAnchor : undefined;
     const guide = this.pendingGuide;
     this.pendingAnchor = null;
     this.pendingGuide = null;
     this.branchNext = false;
+    this.branchFromSelection = false;
     this.branchOrigin = "";
     this.updateChips();
 
@@ -941,38 +988,7 @@ export class TutorView extends ItemView {
       }
     }
     // 教材检索（开关开启时）：检索结果注入 system 上下文，不进 conv.messages、不显示
-    let searchNote = "";
-    if (lastUser && this.plugin.settings.textbookSearchEnabled) {
-      this.setStatus("🔍 正在教材检索（本地索引定位教材原文）…");
-      const hit = await this.plugin.semanticTextbookSearch(lastUser.content);
-      if (hit.found) {
-        // 覆盖范围说明：让 LLM 知道检索覆盖全书（消除"只有这几条片段"的自我设限）；
-        // 引用示例用完整 vault 相对路径（LLM 学样简写文件名曾导致跳转失败）
-        const stats = this.plugin.textbookIndexStats;
-        const cover = stats ? `（${stats.files} 个文件、${stats.chunks} 块）` : "";
-        history.unshift({
-          role: "system",
-          content: [
-            `【教材检索结果】已从教材${cover}检索到以下 ${hit.count} 处最相关原文（按相关度排序，行号可跳转核对）：`,
-            hit.text,
-            "",
-            "回答规则：",
-            "1. 引用教材内容时标注【📖 完整路径:行】，路径必须是 vault 相对路径（如【📖 learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md:364】），禁止简写成文件名。",
-            "2. 引用未覆盖的部分基于已有知识回答即可，不需要声明「教材未直接对应」。",
-            "3. 不编造原文——引用的文字必须来自上面的教材引用。",
-            "4. 当学生要求「多点实例/类似题目/类似的出题思想」时，从上面的引用中至少挑出 3 个以上不同讲次的实例，每个实例都附引用。",
-          ].join("\n"),
-        });
-        searchNote = `（已检索 ${hit.count} 处教材原文）`;
-      } else {
-        // 未命中：注入说明，避免模型防御性表述（"我看不到教材"之类）
-        history.unshift({
-          role: "system",
-          content:
-            "【教材检索】本次未在教材中定位到与问题直接相关的原文（可能教材未覆盖该内容或表述差异）。请直接基于已有知识正常回答，不要声明「看不到教材/没有教材目录/只能基于截图分析」之类的话。",
-        });
-      }
-    }
+    const searchNote = await this.injectTextbookSearch(history, lastUser);
     // 每问一律新线程：lastUser.lineId === activeId 恒真，不能再拿它判 follow-up；
     // 链式追问（本问题线程有父线程）才算继续分支，新根问题不是。
     const lastUserThread = lastUser?.lineId
@@ -1168,6 +1184,43 @@ export class TutorView extends ItemView {
   }
 
   /**
+   * 教材检索注入（respond / regenerate 共用）：检索结果只进本次请求的 system 上下文，
+   * 不进 conv.messages、不显示。返回状态栏文案（"" = 开关关闭/未命中）。
+   */
+  private async injectTextbookSearch(history: ChatMessage[], userMsg: ConvMessage | null | undefined): Promise<string> {
+    if (!userMsg || !this.plugin.settings.textbookSearchEnabled) return "";
+    this.setStatus("🔍 正在教材检索（本地索引定位教材原文）…");
+    const hit = await this.plugin.semanticTextbookSearch(userMsg.content);
+    if (hit.found) {
+      // 覆盖范围说明：让 LLM 知道检索覆盖全书（消除"只有这几条片段"的自我设限）；
+      // 引用示例用完整 vault 相对路径（LLM 学样简写文件名曾导致跳转失败）
+      const stats = this.plugin.textbookIndexStats;
+      const cover = stats ? `（${stats.files} 个文件、${stats.chunks} 块）` : "";
+      history.unshift({
+        role: "system",
+        content: [
+          `【教材检索结果】已从教材${cover}检索到以下 ${hit.count} 处最相关原文（按相关度排序，行号可跳转核对）：`,
+          hit.text,
+          "",
+          "回答规则：",
+          "1. 引用教材内容时标注【📖 完整路径:行】，路径必须是 vault 相对路径（如【📖 learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md:364】），禁止简写成文件名。",
+          "2. 引用未覆盖的部分基于已有知识回答即可，不需要声明「教材未直接对应」。",
+          "3. 不编造原文——引用的文字必须来自上面的教材引用。",
+          "4. 当学生要求「多点实例/类似题目/类似的出题思想」时，从上面的引用中至少挑出 3 个以上不同讲次的实例，每个实例都附引用。",
+        ].join("\n"),
+      });
+      return `（已检索 ${hit.count} 处教材原文）`;
+    }
+    // 未命中：注入说明，避免模型防御性表述（"我看不到教材"之类）
+    history.unshift({
+      role: "system",
+      content:
+        "【教材检索】本次未在教材中定位到与问题直接相关的原文（可能教材未覆盖该内容或表述差异）。请直接基于已有知识正常回答，不要声明「看不到教材/没有教材目录/只能基于截图分析」之类的话。",
+    });
+    return "";
+  }
+
+  /**
    * 重新生成某条 AI 回答（网络波动/回答不佳时使用）：
    * 用该回答对应的提问重建历史（提问及其之前），流式重新生成并替换原回答。
    */
@@ -1215,6 +1268,8 @@ export class TutorView extends ItemView {
         history.push({ role: "assistant", content: m.content });
       }
     }
+    // 与 respond 对齐：教材检索开关开启时同样注入检索上下文（此前重新生成会丢教材引用）
+    const searchNote = await this.injectTextbookSearch(history, userMsg);
 
     // 在原消息位置流式渲染
     const msgEl = this.msgContainer.querySelector(`[data-msg-index="${tIdx}"]`);
@@ -1248,7 +1303,7 @@ export class TutorView extends ItemView {
       }
       await this.plugin.saveConv(this.conv);
       this.renderAll();
-      this.setStatus("🔄 已重新生成");
+      this.setStatus(`🔄 已重新生成${searchNote ? " " + searchNote : ""}`);
     } catch (e) {
       if (streamed) {
         target.content = streamed + `\n\n⚠️ 回答中断：${(e as Error).message.slice(0, 120)}`;
@@ -1362,9 +1417,13 @@ export class TutorView extends ItemView {
           content: `🧭 ${scopeLabel}内推荐的高价值入口（自由选择，可跳入）：`,
           guideEntries: entries,
         });
-        // 同步更新 conv 里已持久化的部分回答（重开后可见最终文本而非原始 JSON）
+        // 收尾落盘：中途持久化（每 1500 字符）对短回答可能从未触发，
+        // 必须把最终回答写进 conv——否则重启后只剩问题没有答案。
+        // 保留 🧭 前缀：沉淀兜底按前缀排除，指引回答不会被误当节点答案。
+        const finalText = `🧭 ${scopeLabel}内推荐的高价值入口（自由选择，可跳入）：\n\n${answer}`;
         const gp = guidePartial as ConvMessage | null;
-        if (gp) gp.content = answer;
+        if (gp) gp.content = finalText;
+        else pushMessage(this.conv, "assistant", finalText, { lineId: active?.id });
       }
       await this.plugin.saveConv(this.conv);
     } catch (e) {
@@ -1378,14 +1437,14 @@ export class TutorView extends ItemView {
    * 沉淀一个线程为认知节点（每问一结点）。
    * - 幂等键 = 线程 nodeFile（持久化在 .conv.json）：已沉淀 → 原位更新；未沉淀 → 新建（同名自动 -2/-3）
    * - parentTitle 由 resolveParentTitle 解析（父线程已沉淀文件 → 线程标题 → 规范清洗标题）
-   * - 内部指令消息（🧭 开头的方向指引）跳过
+   * - 内部指令消息（🧭 开头的方向指引）跳过。返回是否实际写入（💾/清屏计数用）。
    */
-  private async sedimentThread(lineId: string | undefined, answerMsg?: ConvMessage | null) {
-    if (!lineId) return;
+  private async sedimentThread(lineId: string | undefined, answerMsg?: ConvMessage | null): Promise<boolean> {
+    if (!lineId) return false;
     const t = this.conv.reading.threads.find((x) => x.id === lineId);
-    if (!t) return;
+    if (!t) return false;
     const question = t.rootQuestion || t.title || "";
-    if (!question || question.startsWith("🧭")) return;
+    if (!question || question.startsWith("🧭")) return false;
 
     // 回答取参数；未提供时（💾 兜底/回答失败）回落到线程内最后一条非 agent、非 🧭 的 assistant 消息
     let answer = answerMsg?.content ?? "";
@@ -1412,11 +1471,13 @@ export class TutorView extends ItemView {
       title: makeNodeTitle(question),
       content: "",
       parentTitle: resolveParentTitle(parentThread ?? undefined, existingTitles),
-      anchor: { sourcePath: t.anchor?.sourcePath ?? "", quote: t.anchor?.quote ?? question.slice(0, 80) },
+      // 无锚点线程不再用问题文本冒充教材引文（假引文坑）：quote 留空
+      anchor: { sourcePath: t.anchor?.sourcePath ?? "", quote: t.anchor?.quote ?? "" },
       status: t.status,
       rootQuestion: question,
       summary: t.summary,
       response: answer,
+      mastery: t.mastery,
       workspace: this.currentWorkspace,
     };
     const f = await this.plugin.createNode(node, { updatePath: t.nodeFile });
@@ -1424,6 +1485,7 @@ export class TutorView extends ItemView {
     t.nodeFile = f.path;
     await this.plugin.saveConv(this.conv);
     if (isNew) this.setStatus(`已自动沉淀：「${f.basename}」`);
+    return true;
   }
 
   /** 手动沉淀当前活跃线程（自动沉淀失败时的 💾 兜底） */
@@ -1435,6 +1497,15 @@ export class TutorView extends ItemView {
     }
     await this.sedimentThread(active.id);
     new Notice("✅ 认知节点已沉淀");
+  }
+
+  /** 沉淀全部线程（清屏前兜底）：根在前，保证 parentTitle 解析时父文件已存在 */
+  private async sedimentAllThreads(): Promise<number> {
+    let count = 0;
+    for (const t of orderedThreads(this.conv)) {
+      if (await this.sedimentThread(t.id)) count++;
+    }
+    return count;
   }
 
   /** 清屏确认：检测未沉淀对话 → 自动备份 → 清空 */
@@ -1451,9 +1522,11 @@ export class TutorView extends ItemView {
       await this.doClear();
     };
     modal.onSaveAndClear = async () => {
-      await this.saveConversation();
+      // 全工作区判定 → 全部线程沉淀（此前只沉淀活跃线程，其他未沉淀对话只剩 JSON 备份）
+      const n = await this.sedimentAllThreads();
       await this.plugin.exportWorkspace("json");
       await this.doClear();
+      new Notice(`已沉淀 ${n} 个线程后清屏`);
     };
     modal.open();
   }
@@ -2221,13 +2294,63 @@ export class TutorView extends ItemView {
     selBtn.addEventListener("click", async () => {
       const txt = selBtn.getAttribute("data-sel") || "";
       if (!txt) return;
+      // 面板内选中：锚点取所选回答的引用（【📖 文件:行】/所属线程锚点），
+      // 而不是活动 MarkdownView——面板聚焦时它常为 null（引用被静默丢弃）
+      // 或指向无关笔记（锚点错位）。
+      const anchorPath = this.isSelectionInPanel()
+        ? this.resolveSelectionAnchor()
+        : this.app.workspace.getActiveViewOfType(MarkdownView)?.file?.path ?? null;
       document.getSelection()?.removeAllRanges();
       selBtn.style.display = "none";
-      this.receiveSelection(txt, this.app.workspace.getActiveViewOfType(MarkdownView)?.file?.path);
+      this.receiveSelection(txt, anchorPath ?? undefined);
     });
 
     document.addEventListener("selectionchange", updateSelFloat);
     this.registerInterval(window.setInterval(updateSelFloat, 500));
+  }
+
+  /** 当前选中是否发生在面板内（消息区），而非外部编辑器 */
+  private isSelectionInPanel(): boolean {
+    const sel = document.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    return this.contentEl.contains(sel.getRangeAt(0).commonAncestorContainer);
+  }
+
+  /**
+   * 面板内选中文字的锚点解析：选中位置之前最近的引用按钮（【📖 文件:行】）→ 所属消息线程的锚点。
+   * 仅在面板内选中时调用；都找不到返回 null（原文仍会随问题发送，只是无可跳转路径）。
+   */
+  private resolveSelectionAnchor(): string | null {
+    const sel = document.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const node = sel.getRangeAt(0).commonAncestorContainer;
+    const anchorNode = sel.anchorNode ?? node;
+    const msgEl = (node instanceof Element ? node : node.parentElement)?.closest?.(".edge-tutor-msg") ?? null;
+    if (!msgEl) return null;
+    // 1) 选中位置之前最近的 📖 引用按钮（回答里引用的教材原文）
+    let citePath: string | null = null;
+    const walker = document.createTreeWalker(msgEl, NodeFilter.SHOW_ELEMENT);
+    let cur: Node | null = walker.nextNode();
+    while (cur) {
+      const el = cur as HTMLElement;
+      if (el.classList?.contains("edge-tutor-cite-btn")) {
+        // PRECEDING 位：anchorNode 在按钮之前 → 按钮位于选中之后，停止扫描
+        if (el.compareDocumentPosition(anchorNode) & Node.DOCUMENT_POSITION_PRECEDING) break;
+        const m = /^📖\s*(.+):(\d+)$/.exec(el.textContent ?? "");
+        if (m) citePath = m[1].trim();
+      }
+      cur = walker.nextNode();
+    }
+    if (citePath) return citePath;
+    // 2) 所属消息线程的锚点（提问时带过的教材位置）
+    const idxAttr = msgEl.getAttribute("data-msg-index");
+    if (idxAttr !== null) {
+      const msg = this.conv.messages[parseInt(idxAttr, 10)];
+      const thread = msg?.lineId ? this.conv.reading.threads.find((t) => t.id === msg.lineId) : null;
+      if (thread?.anchor?.sourcePath) return thread.anchor.sourcePath;
+      if (msg?.anchor) return msg.anchor;
+    }
+    return null;
   }
 
   /** ===== 草稿 ===== */
@@ -2248,6 +2371,7 @@ export class TutorView extends ItemView {
       workspace: this.currentWorkspace,
       branchNext: this.branchNext,
       branchOrigin: this.branchOrigin,
+      fromSelection: this.branchFromSelection,
       nextAnchor: this.pendingAnchor,
     };
     await this.plugin.saveSettings();
@@ -2263,12 +2387,13 @@ export class TutorView extends ItemView {
     if (draft && draft.text && draft.workspace === this.currentWorkspace) {
       this.inputEl.value = draft.text;
       this.pendingAnchor = draft.nextAnchor ?? null;
+      this.branchFromSelection = draft.fromSelection ?? false;
       // 还原分支意图（Zotero restoreComposerDraft）
       if (draft.branchNext) {
         this.branchNext = true;
         this.branchOrigin = draft.branchOrigin || "";
         this.inputEl.placeholder = "输入新分支的起点…";
-      } else if (this.pendingAnchor && this.branchOrigin) {
+      } else if ((this.pendingAnchor || this.branchFromSelection) && this.branchOrigin) {
         this.inputEl.placeholder = "基于选中文字继续追问…";
       } else {
         this.inputEl.placeholder = "继续这条思路…";
@@ -2392,6 +2517,10 @@ export class TutorView extends ItemView {
           this.pendingGuide = e;
           this.branchNext = false;
           this.branchOrigin = "";
+          // 导引入口覆盖此前的选中追问（导引自带教材锚点）
+          this.branchFromSelection = false;
+          this.pendingAnchor = null;
+          this.updateChips();
           this.inputEl.value = e.question || e.title;
           this.inputEl.placeholder = "可以改写这个问题，然后发送…";
           this.inputEl.focus();
@@ -2736,6 +2865,8 @@ export class ScopeModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
+    // Esc 关闭也要 resolve（此前只处理取消按钮 → openScope 的 promise 永久悬挂）
+    this.scope.register([], "Escape", () => this.closeResolve(null));
     contentEl.createEl("h3", { text: "方向指引设置" });
     contentEl.createEl("div", {
       text: "先选模式（点击高亮），再选范围确定。不选模式则默认混合。",

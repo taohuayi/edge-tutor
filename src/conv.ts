@@ -258,7 +258,8 @@ export function pushMessage(
   opts: { anchor?: string; lineId?: string; agent?: boolean } = {}
 ): ConvMessage {
   const msg: ConvMessage = {
-    id: "m" + Date.now().toString(36),
+    // 加随机后缀：同毫秒连发（重建/粘贴批量 push）时 Date.now 基串会撞 id
+    id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     role,
     content,
     anchor: opts.anchor,
@@ -294,16 +295,19 @@ export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): C
   const idByTitle = new Map<string, string>();
   const idByCleaned = new Map<string, string>();
   const idByRootQuestion = new Map<string, string>();
+  // id 按节点顺序分配；同名节点不再互相覆盖（旧实现 idByTitle 后者覆盖前者，
+  // 重名线程会共享同一 id → ancestry/childrenOf/activeThread 全乱）
+  const ids = nodes.map((_, i) => "q" + (i + 1));
   nodes.forEach((n, i) => {
-    const id = "q" + (i + 1);
-    idByTitle.set(n.title, id);
+    if (!idByTitle.has(n.title)) idByTitle.set(n.title, ids[i]);
     const cleaned = makeNodeTitle(n.rootQuestion || n.title);
-    if (cleaned && !idByCleaned.has(cleaned)) idByCleaned.set(cleaned, id);
-    if (n.rootQuestion && !idByRootQuestion.has(n.rootQuestion)) idByRootQuestion.set(n.rootQuestion, id);
+    if (cleaned && !idByCleaned.has(cleaned)) idByCleaned.set(cleaned, ids[i]);
+    if (n.rootQuestion && !idByRootQuestion.has(n.rootQuestion)) idByRootQuestion.set(n.rootQuestion, ids[i]);
   });
 
-  for (const n of nodes) {
-    const id = idByTitle.get(n.title)!;
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    const id = ids[i];
     const parentId = n.parentTitle
       ? (idByTitle.get(n.parentTitle) ?? idByCleaned.get(n.parentTitle) ?? idByRootQuestion.get(n.parentTitle) ?? null)
       : null;
@@ -311,6 +315,7 @@ export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): C
       question: n.rootQuestion || n.title,
       parentId,
       anchor: n.anchor,
+      originExcerpt: n.originExcerpt,
     });
     // 覆写 addThread 默认值（节点是权威源）
     thread.id = id;
@@ -319,8 +324,15 @@ export function buildConvFromNodes(nodes: CognitiveNode[], workspace: string): C
     thread.summary = n.summary || "";
     thread.status = n.status;
     thread.nodeFile = n.filePath;
+    // 原文摘录/创建时间/掌握深度随 frontmatter 恢复（清屏重建不再丢「由原文引出」与状态）
+    if (n.originExcerpt) thread.originExcerpt = n.originExcerpt;
+    if (n.created) {
+      const d = new Date(n.created);
+      if (!Number.isNaN(d.getTime())) thread.createdAt = d.toISOString();
+    }
     // 封顶标记持久化在节点 frontmatter → 重建时恢复
-    if (n.locked) thread.mastery = "mastered";
+    if (n.locked || n.mastery === "mastered") thread.mastery = "mastered";
+    else if (n.mastery) thread.mastery = n.mastery;
     pushMessage(conv, "user", n.rootQuestion || n.title, { lineId: id });
     const fullResponse = extractMentorResponse(n.content);
     if (fullResponse) pushMessage(conv, "assistant", fullResponse, { lineId: id });

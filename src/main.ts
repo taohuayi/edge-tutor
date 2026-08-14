@@ -16,7 +16,7 @@
  *   - 首次启动做旧 .conv.json 迁移（一次性，导入后标记）
  */
 import { App, FileSystemAdapter, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, WorkspaceLeaf } from "obsidian";
-import { DEFAULT_SETTINGS, TutorSettings, PRESET_PROVIDERS, agentConfig, chatCompletion, ChatMessage, resolveEmbeddingApiKey } from "./ai";
+import { DEFAULT_SETTINGS, TutorSettings, PRESET_PROVIDERS, agentConfig, chatCompletion, ChatMessage, resolveEmbeddingApiKey, resolveProviderKey, readEnv } from "./ai";
 import { buildVaultExecutor, AgentStep, AgentResult, runAgent } from "./agent";
 import { runOpenCodeTask, OpenCodeConfig, OpenCodeResult } from "./opencode";
 import { buildMocContent, buildNodeContent, CognitiveNode, makeNodeTitle, parseNodeFromContent } from "./tutor";
@@ -534,9 +534,24 @@ export default class EdgeTutorPlugin extends Plugin {
     const folder = this.workspaceFolderPathOf(ws);
     await this.ensureFolder(folder);
     const content = node.content || buildNodeContent(node);
-    if (opts?.updatePath && opts.updatePath.startsWith(folder + "/")) {
-      const target = this.app.vault.getAbstractFileByPath(opts.updatePath);
-      if (target instanceof TFile) {
+    if (opts?.updatePath) {
+      const up = opts.updatePath.replace(/\\/g, "/");
+      // ① 完整 vault 路径直接命中（现行语义）
+      let target: TFile | null = null;
+      if (up.startsWith(folder + "/")) {
+        const f = this.app.vault.getAbstractFileByPath(up);
+        if (f instanceof TFile) target = f;
+      }
+      // ② 历史/修复脚本写的相对路径、或工作区搬移后的旧前缀：按 basename 在当前工作区目录找回。
+      //    （幂等键是线程 nodeFile——失效时绝不能另建 -2 重复节点，必须回到原文件）
+      if (!target) {
+        const base = up.split("/").pop() ?? "";
+        const dir = this.app.vault.getAbstractFileByPath(folder);
+        if (base && dir instanceof TFolder) {
+          target = dir.children.find((c): c is TFile => c instanceof TFile && c.name === base) ?? null;
+        }
+      }
+      if (target) {
         await this.app.vault.modify(target, content);
         await this.updateMoc(ws);
         return target;
@@ -614,6 +629,22 @@ export default class EdgeTutorPlugin extends Plugin {
     if (oldFolder instanceof TFolder) {
       try {
         await this.app.vault.rename(oldFolder, newPath);
+        // 工作区搬移后 conv 里线程 nodeFile 指向旧路径 → 同步改写，保住幂等键
+        //（否则重新生成/💾 会因 updatePath 失效另建 -2 重复节点）
+        try {
+          const conv = await this.loadConv(finalId);
+          let changed = false;
+          for (const t of conv.reading.threads) {
+            const nf = t.nodeFile?.replace(/\\/g, "/");
+            if (nf && nf.startsWith(oldPath + "/")) {
+              t.nodeFile = newPath + nf.slice(oldPath.length);
+              changed = true;
+            }
+          }
+          if (changed) await this.saveConv(conv);
+        } catch (e) {
+          console.warn("[edge-tutor] renameWorkspace 更新 nodeFile 失败", (e as Error).message.slice(0, 100));
+        }
         return finalId;
       } catch (e) {
         new Notice("重命名失败：" + (e as Error).message.slice(0, 80));
@@ -634,11 +665,9 @@ export default class EdgeTutorPlugin extends Plugin {
     const conv = await this.loadConv(workspace);
     let deleted = 0;
 
-    // 1. 收集线程标题（用于定位节点文件）后删除线程与消息
-    const titles: string[] = [];
+    // 1. 收集目标线程后删除线程与消息
     const threads = conv.reading.threads.filter((t) => ids.has(t.id));
     for (const t of threads) {
-      titles.push(t.title || t.rootQuestion || "");
       conv.reading.threads = conv.reading.threads.filter((x) => x.id !== t.id);
       deleted++;
     }
@@ -650,29 +679,46 @@ export default class EdgeTutorPlugin extends Plugin {
     }
     await this.saveConv(conv);
 
-    // 4. 删除节点文件（进回收站）
-    //    先按标题精确匹配；未命中时（线程标题被 ✏️ 改写、或沉淀时标题被 makeNodeTitle 清洗）
-    //    遍历工作区直接节点，按 title / rootQuestion 匹配文件再删除。
+    // 4. 删除节点文件（进回收站）。定位顺序：
+    //    ① 线程 nodeFile（幂等键，最可靠——✏️ 改名/长标题截断都不影响）
+    //    ② 按标题/清洗标题精确拼路径；③ 遍历工作区直接节点按 title/rootQuestion 兜底。
     const folder = this.workspaceFolderPathOf(workspace);
-    for (const title of titles) {
-      if (!title) continue;
-      let f = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
-      if (!(f instanceof TFile)) {
-        const dir = this.app.vault.getAbstractFileByPath(folder);
-        if (dir instanceof TFolder) {
-          for (const child of dir.children) {
-            if (!(child instanceof TFile) || !child.name.endsWith(".md")) continue;
-            if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
-            try {
-              const content = await this.app.vault.cachedRead(child);
-              const node = parseNodeFromContent(child.basename, content, child.path);
-              if (node.title === title || node.rootQuestion === title) {
-                f = child;
-                break;
-              }
-            } catch (e) {
-              // 单个文件解析失败跳过，不影响其他文件
+    const dir = this.app.vault.getAbstractFileByPath(folder);
+    for (const t of threads) {
+      const title = t.title || t.rootQuestion || "";
+      let f: TFile | null = null;
+      const cands: string[] = [];
+      const nf = t.nodeFile?.replace(/\\/g, "/");
+      if (nf) {
+        cands.push(nf);
+        const base = nf.split("/").pop() ?? "";
+        if (base) cands.push(`${folder}/${base}`);
+      }
+      if (title) {
+        cands.push(`${folder}/${title}.md`);
+        cands.push(`${folder}/${makeNodeTitle(title)}.md`);
+      }
+      for (const p of cands) {
+        if (!p || p.endsWith("/.md")) continue;
+        const hit = this.app.vault.getAbstractFileByPath(p);
+        if (hit instanceof TFile) {
+          f = hit;
+          break;
+        }
+      }
+      if (!f && dir instanceof TFolder) {
+        for (const child of dir.children) {
+          if (!(child instanceof TFile) || !child.name.endsWith(".md")) continue;
+          if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
+          try {
+            const content = await this.app.vault.cachedRead(child);
+            const node = parseNodeFromContent(child.basename, content, child.path);
+            if (node.title === title || node.rootQuestion === title) {
+              f = child;
+              break;
             }
+          } catch (e) {
+            // 单个文件解析失败跳过，不影响其他文件
           }
         }
       }
@@ -682,6 +728,8 @@ export default class EdgeTutorPlugin extends Plugin {
         } catch (e) {
           console.warn("[edge-tutor] 节点文件删除失败", title, e);
         }
+      } else {
+        console.warn("[edge-tutor] 未定位到节点文件（可能已手动删除）", title || t.id);
       }
     }
     return deleted;
@@ -920,11 +968,32 @@ export default class EdgeTutorPlugin extends Plugin {
 
   /**
    * 设置节点封顶标记（🔒）：同步写入节点 frontmatter（持久化，重建会话时恢复）。
-   * 节点文件不存在时仅返回 false（不强制）。
+   * 标题 ≠ 文件 basename（✏️ 改名 / 长问题截断 / agent 命名）时逐级兜底定位节点文件；
+   * 定位失败仅返回 false（不强制）。
    */
   async setNodeLocked(workspace: string, title: string, locked: boolean): Promise<boolean> {
     const folder = this.workspaceFolderPathOf(workspace);
-    const f = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
+    // ① 精确 basename ② 遍历直接节点按 title/rootQuestion 匹配 ③ 节点标题等于 basename
+    let f: TFile | null = null;
+    const direct = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
+    if (direct instanceof TFile) f = direct;
+    const dir = this.app.vault.getAbstractFileByPath(folder);
+    if (!f && dir instanceof TFolder) {
+      for (const child of dir.children) {
+        if (!(child instanceof TFile) || !child.name.endsWith(".md")) continue;
+        if (child.name.startsWith(".") || child.name === "认知边缘地图.md") continue;
+        try {
+          const content = await this.app.vault.cachedRead(child);
+          const node = parseNodeFromContent(child.basename, content, child.path);
+          if (node.title === title || node.rootQuestion === title) {
+            f = child;
+            break;
+          }
+        } catch (e) {
+          // 单个文件解析失败跳过
+        }
+      }
+    }
     if (!(f instanceof TFile)) return false;
     try {
       const content = await this.app.vault.read(f);
@@ -932,10 +1001,12 @@ export default class EdgeTutorPlugin extends Plugin {
       if (hasLocked === locked) return true;
       let next: string;
       if (locked) {
-        // 在 frontmatter 结尾（--- 前）插入
-        next = content.replace(/^---\n([\s\S]*?)\n---/, (_m, body: string) => `---\n${body}${body.trimEnd().endsWith("\n") ? "" : "\n"}locked: true\n---`);
+        // 在 frontmatter 结尾（--- 前）插入；mastery 双写（重建会话时由 mastery: mastered 恢复封顶）
+        next = content.replace(/^---\n([\s\S]*?)\n---/, (_m, body: string) => `---\n${body}${body.trimEnd().endsWith("\n") ? "" : "\n"}locked: true\nmastery: mastered\n---`);
       } else {
+        // 解锁：移除 locked 行，mastery 从 mastered 落回 exploring（保持进行中状态）
         next = content.replace(/^locked:\s*true\n/m, "");
+        next = next.replace(/^mastery:\s*mastered\n/m, "mastery: exploring\n");
       }
       if (next === content) return false;
       await this.app.vault.modify(f, next);
@@ -1348,11 +1419,13 @@ export default class EdgeTutorPlugin extends Plugin {
               .filter((a) => ranked.some((m) => m.ref.file === a.file && a.startLine >= m.ref.startLine && a.startLine <= m.ref.endLine))
               .slice(0, 2);
             const keepSources: SearchRef[] = [...keptRefs, ...vecHits.slice(0, 2)];
+            // keptItems 提升到 if 外：console.info 在 keepSources 为空时也会引用它
+            //（块级 const 越界 → ReferenceError 被 catch 吞掉并误报"rerank 不可用"）
+            const keptKeys = new Set<string>();
+            const keptItems: { ref: SearchRef; score: number }[] = [];
             if (keepSources.length > 0) {
               // 保底条目 → 其对应的候选块 key（ranked 里的条目是块，aRefs 是行级命中，
               // 去重必须用块的 key，否则 key 对不上）
-              const keptKeys = new Set<string>();
-              const keptItems: { ref: SearchRef; score: number }[] = [];
               for (const a of keepSources) {
                 const m = ranked.find((x) => x.ref.file === a.file && a.startLine >= x.ref.startLine && a.startLine <= x.ref.endLine);
                 if (!m) continue;
@@ -1889,7 +1962,7 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Provider")
-      .setDesc("选择 API 提供商（预设：DeepSeek 官方 / Tokeness-Claude / Tokeness-GPT / Zhuomatech）。切换后自动填充地址、密钥与模型。")
+      .setDesc("选择 API 提供商。预设不再内置明文密钥：切换后自动填充地址与模型，密钥从环境变量 EDGE_TUTOR_KEY_<ID> 读取（见下方密钥状态），也可手动填写。")
       .addDropdown((dropdown) => {
         for (const p of PRESET_PROVIDERS) {
           dropdown.addOption(p.id, p.name);
@@ -1939,7 +2012,7 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("API Key")
-      .setDesc("当前 Provider 的密钥（切换 Provider 自动填充，可手动改；仅存本地 data.json）")
+      .setDesc("当前 Provider 的密钥（仅存本地 data.json）。预设不再内置明文 key：切换 Provider 后这里为空，密钥自动从环境变量 EDGE_TUTOR_KEY_<ID> 读取；chat2api 反代 JWT 仍可在此填写。")
       .addText((text) => {
         text.inputEl.type = "password";
         text.setPlaceholder("sk-...")
@@ -1949,6 +2022,60 @@ class EdgeTutorSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
+
+    (() => {
+      const activeProvider =
+        PRESET_PROVIDERS.find((p) => p.id === this.plugin.settings.activeProvider) ??
+        PRESET_PROVIDERS[0];
+      const keySource = (() => {
+        if (this.plugin.settings.apiKey && this.plugin.settings.apiKey.trim()) {
+          return "🔑 设置中的显式密钥（data.json）";
+        }
+        if (activeProvider.keyEnv && readEnv(activeProvider.keyEnv)) {
+          return "🌍 环境变量 " + activeProvider.keyEnv;
+        }
+        const g = this.plugin.settings.apiKeyEnv || "EDGE_TUTOR_API_KEY";
+        if (readEnv(g)) {
+          return "🌍 全局环境变量 " + g;
+        }
+        return "⚠️ 未配置密钥";
+      })();
+
+      new Setting(containerEl)
+        .setName("密钥状态")
+        .setDesc(
+          "当前 Provider（" +
+            activeProvider.name +
+            "）：" +
+            keySource +
+            "。环境变量为空的 Provider，切换后需在本机设置对应环境变量或在上方手动填写。",
+        )
+        .addButton((btn) =>
+          btn.setButtonText("测试连接").onClick(async () => {
+            btn.setButtonText("测试中…");
+            btn.setDisabled(true);
+            const ctrl = new AbortController();
+            const timer = window.setTimeout(() => ctrl.abort(), 15000);
+            try {
+              await chatCompletion(
+                this.plugin.settings,
+                [{ role: "user", content: "ping" }],
+                { maxTokens: 4, signal: ctrl.signal },
+              );
+              new Notice("✅ 连接成功：" + activeProvider.name);
+            } catch (e) {
+              new Notice(
+                "❌ 连接失败：" + (e instanceof Error ? e.message.slice(0, 200) : String(e)),
+                8000,
+              );
+            } finally {
+              window.clearTimeout(timer);
+              btn.setButtonText("测试连接");
+              btn.setDisabled(false);
+            }
+          }),
+        );
+    })();
 
     new Setting(containerEl)
       .setName("回答长度（max_tokens）")

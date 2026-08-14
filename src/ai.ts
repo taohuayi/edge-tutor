@@ -2,8 +2,11 @@
  * AI 对话层：直连 OpenAI 兼容 API（DeepSeek 等）
  * 设计原则：价值识别器 —— 识别"珍贵/细节"，推深但不拉回
  *
- * 安全：API key 优先从环境变量 EDGE_TUTOR_API_KEY 读取，
- * 不再要求明文写在 data.json。
+ * 安全：源码不内置任何明文 key。生效 key 解析优先级：
+ *   ① 设置里显式填写的 apiKey（如 chat2api 反代 JWT）
+ *   ② Provider 专属环境变量（provider.keyEnv，如 EDGE_TUTOR_KEY_DEEPSEEK）
+ *   ③ 全局环境变量（settings.apiKeyEnv，默认 EDGE_TUTOR_API_KEY）
+ *   ④ 预设自带 key（自 v0.9.0 起全部为空字符串）
  */
 
 export interface TutorSettings {
@@ -27,6 +30,8 @@ export interface TutorSettings {
     branchNext?: boolean;
     /** 分支来源（当前线程摘要/问题） */
     branchOrigin?: string;
+    /** 选中追问来源（由此追问：即使无教材路径，原文也要随问题发送） */
+    fromSelection?: boolean;
     /** 下一跳锚点 */
     nextAnchor?: string | null;
   } | null;
@@ -81,7 +86,10 @@ export interface Provider {
   id: string;
   name: string;
   apiBase: string;
+  /** 预设自带 key（v0.9.0 起恒为空：明文 key 不再进源码） */
   apiKey: string;
+  /** 该 provider 专属的环境变量名（如 EDGE_TUTOR_KEY_DEEPSEEK） */
+  keyEnv?: string;
   /** 该 provider 的可用模型 */
   models: string[];
 }
@@ -92,14 +100,16 @@ export const PRESET_PROVIDERS: Provider[] = [
     id: "deepseek",
     name: "DeepSeek（官方）",
     apiBase: "https://api.deepseek.com/v1",
-    apiKey: "sk-35ffe2de30b04ad0b7d592365f9e903e",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_DEEPSEEK",
     models: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"],
   },
   {
     id: "tokeness-claude",
     name: "Tokeness（Claude）",
     apiBase: "https://n.tokeness.io/v1",
-    apiKey: "sk-rjPPBDyyz3IYvU82pwTcVe8Hv76oaW9wKsd4QwZeC4ScDq2O",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_CLAUDE",
     // 实测（2026-08-10）：此 key 挂在 Claude 组，仅这 4 个模型可用，其余返回 model_not_found
     models: ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
   },
@@ -107,7 +117,8 @@ export const PRESET_PROVIDERS: Provider[] = [
     id: "tokeness-gpt",
     name: "Tokeness（GPT）",
     apiBase: "https://n.tokeness.io/v1",
-    apiKey: "sk-aR3eFlf91K3FZFw1vCNeLu5d0FMgC01cWbFYDzORRuBbaDKk",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_GPT",
     // GPT 组 key（来源：Hermes config.yaml 的 providers.tokeness-gpt，2026-08-10 实测 6 模型全通）
     models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
   },
@@ -115,7 +126,8 @@ export const PRESET_PROVIDERS: Provider[] = [
     id: "zhuomatech",
     name: "Zhuomatech",
     apiBase: "https://api.zhuomatech.cn/v1",
-    apiKey: "sk-3b456d2bab4cd33652f83730d8316824b6f5beafcb9297d8e0604d078cd06497",
+    apiKey: "",
+    keyEnv: "EDGE_TUTOR_KEY_ZHUOMATECH",
     models: ["codex-auto-review", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra"],
   },
   {
@@ -183,18 +195,44 @@ export interface ChatMessage {
   content: string;
 }
 
-/** 读取有效 API key：设置里显式填的优先（如 chat2api 反代 JWT），环境变量兜底 */
-export function resolveApiKey(settings: TutorSettings): string {
-  if (settings.apiKey && settings.apiKey.trim()) return settings.apiKey;
-  if (settings.apiKeyEnv) {
-    try {
-      const env = (globalThis as any)?.process?.env?.[settings.apiKeyEnv];
-      if (env) return env;
-    } catch (e) {
-      // 忽略环境变量访问失败
-    }
+/**
+ * 读取环境变量（可注入 env 表供单测）。
+ * 插件运行在 Obsidian 渲染进程（Node 环境），process.env 可用。
+ */
+export function readEnv(name: string, env?: Record<string, string | undefined>): string {
+  try {
+    const v = env ? env[name] : (globalThis as any)?.process?.env?.[name];
+    return v ? String(v) : "";
+  } catch (e) {
+    return "";
   }
-  return settings.apiKey || "";
+}
+
+/**
+ * 解析当前 Provider 的生效 API key（纯函数，env 可注入）：
+ * ① 设置显式 apiKey（如 chat2api 反代 JWT）
+ * ② Provider 专属环境变量（provider.keyEnv）
+ * ③ 全局环境变量（settings.apiKeyEnv）
+ * ④ 预设自带 key（v0.9.0 起恒为空）
+ */
+export function resolveProviderKey(
+  settings: TutorSettings,
+  provider: Provider,
+  env?: Record<string, string | undefined>,
+): string {
+  if (settings.apiKey && settings.apiKey.trim()) return settings.apiKey;
+  if (provider.keyEnv) {
+    const v = readEnv(provider.keyEnv, env);
+    if (v) return v;
+  }
+  const globalEnv = readEnv(settings.apiKeyEnv || "EDGE_TUTOR_API_KEY", env);
+  if (globalEnv) return globalEnv;
+  return provider.apiKey && provider.apiKey.trim() ? provider.apiKey : "";
+}
+
+/** 兼容入口：按当前 Provider 解析（语义同 resolveProviderKey） */
+export function resolveApiKey(settings: TutorSettings): string {
+  return resolveProviderKey(settings, resolveProvider(settings));
 }
 
 /** 读取执行模式（Agent）API key：环境变量 > 设置明文 */
@@ -223,24 +261,11 @@ export function agentConfig(settings: TutorSettings): {
   };
 }
 
-/** 当前生效的端点（provider 优先，回落旧字段） */
+/** 当前生效的端点（provider 优先，回落旧字段；key 解析见 resolveProviderKey） */
 export function activeEndpoint(settings: TutorSettings): { apiBase: string; apiKey: string } {
   const p = resolveProvider(settings);
   const apiBase = p.apiBase || settings.apiBase || "https://api.deepseek.com/v1";
-  const key =
-    // 用户显式填的 key 优先（如 chat2api 反代 JWT；环境变量可能存着旧 key 会盖掉它）
-    (settings.apiKey && settings.apiKey.trim() ? settings.apiKey : "") ||
-    (p.apiKey && p.apiKey.trim() ? p.apiKey : "") ||
-    (() => {
-      try {
-        const env = (globalThis as any)?.process?.env?.[settings.apiKeyEnv || "EDGE_TUTOR_API_KEY"];
-        return env ? String(env) : "";
-      } catch (e) {
-        return "";
-      }
-    })() ||
-    "";
-  return { apiBase, apiKey: key };
+  return { apiBase, apiKey: resolveProviderKey(settings, p) };
 }
 
 /** 价值识别器系统提示词 —— 范式核心 */
