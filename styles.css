@@ -1439,6 +1439,14 @@
   opacity: 0.85;
 }
 
+/* ---------- @ 引用笔记建议高亮 ---------- */
+.suggestion-title mark {
+  background: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+  color: var(--interactive-accent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 /* ---------- 懒加载按钮 ---------- */
 .edge-tutor-load-more {
   border-radius: 14px;

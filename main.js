@@ -47173,6 +47173,8 @@ var import_obsidian3 = require("obsidian");
 var NoteSuggest = class extends import_obsidian3.AbstractInputSuggest {
   constructor(app, textarea, onChoose) {
     super(app, textarea);
+    /** 当前查询（renderSuggestion 高亮命中片段用） */
+    this.currentQuery = "";
     this.textarea = textarea;
     this.onChoose = onChoose;
     this.limit = 20;
@@ -47199,11 +47201,26 @@ var NoteSuggest = class extends import_obsidian3.AbstractInputSuggest {
   }
   getSuggestions(query) {
     const q = query.toLowerCase();
-    return this.app.vault.getMarkdownFiles().filter((f) => !q || f.basename.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
+    this.currentQuery = q;
+    return this.app.vault.getMarkdownFiles().filter((f) => !q || f.basename.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)).sort((a, b) => {
+      const ab2 = a.basename.toLowerCase().includes(q) ? 0 : 1;
+      const bb2 = b.basename.toLowerCase().includes(q) ? 0 : 1;
+      if (ab2 !== bb2) return ab2 - bb2;
+      return a.basename.localeCompare(b.basename, "zh");
+    });
   }
   renderSuggestion(file, el2) {
     el2.empty();
-    el2.createDiv({ cls: "suggestion-title", text: file.basename });
+    const title = el2.createDiv({ cls: "suggestion-title" });
+    const q = this.currentQuery;
+    const idx = q ? file.basename.toLowerCase().indexOf(q) : -1;
+    if (idx >= 0) {
+      title.appendText(file.basename.slice(0, idx));
+      title.createEl("mark", { text: file.basename.slice(idx, idx + q.length) });
+      title.appendText(file.basename.slice(idx + q.length));
+    } else {
+      title.setText(file.basename);
+    }
     const folder = file.parent && file.parent.path !== "/" ? file.parent.path : "";
     if (folder) el2.createDiv({ cls: "suggestion-note", text: folder });
   }
@@ -47222,6 +47239,86 @@ var NoteSuggest = class extends import_obsidian3.AbstractInputSuggest {
     return !!this.isOpen;
   }
 };
+
+// src/viewlogic.ts
+function citeRefRe() {
+  return /【📖\s*([^】]+?):(\d+)(?:-(\d+))?】/g;
+}
+function paragraphReady(t) {
+  let fences = 0;
+  for (const line of t.split("\n")) {
+    if (line.trimStart().startsWith("```")) fences++;
+  }
+  if (fences % 2 !== 0) return false;
+  return t.split("\\(").length - 1 === t.split("\\)").length - 1 && t.split("\\[").length - 1 === t.split("\\]").length - 1;
+}
+function splitCommittableParagraphs(pending) {
+  const parts = pending.split("\n\n");
+  const done = [];
+  let rest = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i < parts.length - 1 && paragraphReady(parts[i])) {
+      done.push(parts[i]);
+    } else {
+      rest = parts.slice(i).join("\n\n");
+      break;
+    }
+  }
+  return { done, rest };
+}
+function attachCitationButtonsDOM(container, onNavigate) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.nodeValue ?? "";
+    if (!text.includes("\u3010\u{1F4D6}")) continue;
+    const re2 = citeRefRe();
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let replaced = 0;
+    let m;
+    while ((m = re2.exec(text)) !== null) {
+      frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const file = m[1].trim();
+      const line = parseInt(m[2], 10);
+      const btn = document.createElement("button");
+      btn.className = "edge-tutor-cite-btn";
+      btn.textContent = `\u{1F4D6} ${file}:${line}`;
+      btn.addEventListener("click", () => onNavigate({ file, line }));
+      frag.appendChild(btn);
+      replaced++;
+      last = m.index + m[0].length;
+    }
+    if (replaced > 0) {
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      node.replaceWith(frag);
+    }
+  }
+}
+function attachCodeCopyButtonsDOM(container, notify, onError) {
+  for (const pre of Array.from(container.querySelectorAll("pre"))) {
+    if (pre.querySelector(".edge-tutor-code-copy")) continue;
+    const code = pre.querySelector("code");
+    if (!code) continue;
+    pre.classList.add("edge-tutor-code-block");
+    const btn = document.createElement("button");
+    btn.className = "edge-tutor-code-copy";
+    btn.textContent = "\u{1F4CB}";
+    btn.setAttribute("title", "\u590D\u5236\u4EE3\u7801");
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(code.textContent ?? "");
+        notify("\u5DF2\u590D\u5236\u4EE3\u7801");
+      } catch (err) {
+        onError?.(err);
+        notify("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u590D\u5236");
+      }
+    });
+    pre.appendChild(btn);
+  }
+}
 
 // src/view.ts
 var VIEW_TYPE_TUTOR = "edge-tutor-view";
@@ -48025,26 +48122,10 @@ ${branchInstr}` : "";
         this.msgContainer.scrollTop = this.msgContainer.scrollHeight;
       }
     };
-    const paragraphReady = (t) => {
-      let fences = 0;
-      for (const line of t.split("\n")) if (line.trimStart().startsWith("```")) fences++;
-      if (fences % 2 !== 0) return false;
-      return t.split("\\(").length - 1 === t.split("\\)").length - 1 && t.split("\\[").length - 1 === t.split("\\]").length - 1;
-    };
     const flushStreamRender = () => {
       lastRenderAt = Date.now();
       if (!pending) return;
-      const parts = pending.split("\n\n");
-      const done = [];
-      let rest = "";
-      for (let i = 0; i < parts.length; i++) {
-        if (i < parts.length - 1 && paragraphReady(parts[i])) {
-          done.push(parts[i]);
-        } else {
-          rest = parts.slice(i).join("\n\n");
-          break;
-        }
-      }
+      const { done, rest } = splitCommittableParagraphs(pending);
       if (done.length > 0) {
         pending = rest;
         for (const p of done) {
@@ -49424,61 +49505,17 @@ ${answer}`;
     el2.remove();
     this.appendMessageRaw(msg);
   }
-  /** 扫描回答中的引用标记【📖 文件:行】→ 可点击按钮（跳转教材行） */
+  /** 扫描回答中的引用标记【📖 文件:行】→ 可点击按钮（跳转教材行；DOM 逻辑在 viewlogic.ts） */
   attachCitationButtons(container) {
-    const re2 = /【📖\s*([^】]+?):(\d+)(?:-(\d+))?】/g;
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode);
-    for (const node of nodes) {
-      const text = node.nodeValue ?? "";
-      if (!text.includes("\u3010\u{1F4D6}")) continue;
-      const frag = document.createDocumentFragment();
-      let last = 0;
-      let m;
-      re2.lastIndex = 0;
-      let replaced = 0;
-      while ((m = re2.exec(text)) !== null) {
-        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-        const file = m[1].trim();
-        const line = parseInt(m[2], 10);
-        const btn = document.createElement("button");
-        btn.className = "edge-tutor-cite-btn";
-        btn.textContent = `\u{1F4D6} ${file}:${line}`;
-        btn.addEventListener("click", () => void this.navigateToTextAnchor(file, "", line));
-        frag.appendChild(btn);
-        replaced++;
-        last = m.index + m[0].length;
-      }
-      if (replaced > 0) {
-        frag.appendChild(document.createTextNode(text.slice(last)));
-        node.replaceWith(frag);
-      }
-    }
+    attachCitationButtonsDOM(container, (ref) => void this.navigateToTextAnchor(ref.file, "", ref.line));
   }
-  /** 代码块 hover 复制按钮（P2-5）：在 MarkdownRenderer.render 完成后调用 */
+  /** 代码块 hover 复制按钮（P2-5）：在 MarkdownRenderer.render 完成后调用；DOM 逻辑在 viewlogic.ts */
   attachCodeCopyButtons(container) {
-    for (const pre of Array.from(container.querySelectorAll("pre"))) {
-      if (pre.querySelector(".edge-tutor-code-copy")) continue;
-      const code = pre.querySelector("code");
-      if (!code) continue;
-      pre.classList.add("edge-tutor-code-block");
-      const btn = document.createElement("button");
-      btn.className = "edge-tutor-code-copy";
-      btn.textContent = "\u{1F4CB}";
-      btn.setAttribute("title", "\u590D\u5236\u4EE3\u7801");
-      btn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(code.textContent ?? "");
-          new import_obsidian4.Notice("\u5DF2\u590D\u5236\u4EE3\u7801");
-        } catch (err) {
-          console.error("\u590D\u5236\u4EE3\u7801\u5931\u8D25", err);
-          new import_obsidian4.Notice("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u590D\u5236");
-        }
-      });
-      pre.appendChild(btn);
-    }
+    attachCodeCopyButtonsDOM(
+      container,
+      (msg) => new import_obsidian4.Notice(msg),
+      (e) => console.error("\u590D\u5236\u4EE3\u7801\u5931\u8D25", e)
+    );
   }
   scrollToBottom() {
     if (this.msgContainer) {

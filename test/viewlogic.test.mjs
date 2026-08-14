@@ -1,0 +1,51 @@
+/**
+ * v0.10.1 viewlogic 纯逻辑回归测试
+ * （C5 分层第一步：从 view.ts 抽出的流式段落判定 / 引用解析）
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  paragraphReady,
+  splitCommittableParagraphs,
+  parseCiteRef,
+} from "./.build/viewlogic.cjs";
+
+test("paragraphReady：围栏成对且公式闭合 → true", () => {
+  assert.equal(paragraphReady("普通段落"), true);
+  assert.equal(paragraphReady("行内 \\(x\\) 公式"), true);
+  assert.equal(paragraphReady("块级 \\[x\\] 公式"), true);
+});
+
+test("paragraphReady：围栏未闭合 → false", () => {
+  assert.equal(paragraphReady("```js\nconst a = 1;"), false);
+});
+
+test("paragraphReady：公式半截 → false", () => {
+  assert.equal(paragraphReady("半截 \\(x"), false);
+  assert.equal(paragraphReady("半截 \\[x"), false);
+});
+
+test("splitCommittableParagraphs：完整段落进 done，尾部未闭合段留 rest", () => {
+  const { done, rest } = splitCommittableParagraphs("第一段。\n\n第二段。\n\n未闭合 \\(x");
+  assert.deepEqual(done, ["第一段。", "第二段。"]);
+  assert.equal(rest, "未闭合 \\(x");
+});
+
+test("splitCommittableParagraphs：围栏跨段 → 后半整体留 rest", () => {
+  const { done, rest } = splitCommittableParagraphs("上文。\n\n```js\nconst a = 1;\n\n```\n后文。");
+  // 第一段可提交；围栏段未闭合时（若闭合成对则也可提交）
+  assert.ok(done.length >= 1);
+  assert.equal(done[0], "上文。");
+  assert.ok((done.join("\n\n") + "\n\n" + rest).includes("```js"));
+});
+
+test("splitCommittableParagraphs：空 pending → 空结果", () => {
+  assert.deepEqual(splitCommittableParagraphs(""), { done: [], rest: "" });
+});
+
+test("parseCiteRef：解析【📖 文件:行】与区间", () => {
+  assert.deepEqual(parseCiteRef("见【📖 第1讲.md:698】"), { file: "第1讲.md", line: 698 });
+  assert.deepEqual(parseCiteRef("见【📖 a/b/第2讲.md:12-20】"), { file: "a/b/第2讲.md", line: 12 });
+  assert.equal(parseCiteRef("没有引用"), null);
+  assert.equal(parseCiteRef("【📖 无行号.md】"), null);
+});

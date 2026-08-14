@@ -20,6 +20,7 @@ import { SearchHit } from "./search";
 import { parkQuestion, takeParked, makeNodeTitle, buildNodeContent } from "./tutor";
 import { mindMapLayout, layoutToCoordinates, buildEdgePath, MindMapThread } from "./canvas";
 import { NoteSuggest } from "./suggest";
+import { splitCommittableParagraphs, attachCitationButtonsDOM, attachCodeCopyButtonsDOM } from "./viewlogic";
 import {
   Conv, ConvMessage, ConvThread, freshConv, pushMessage, addThread, ancestry, activeThread,
   collectSubtree, reparentThread, switchThread, pauseActive, removeMessage, orderedThreads,
@@ -1044,32 +1045,11 @@ export class TutorView extends ItemView {
         this.msgContainer.scrollTop = this.msgContainer.scrollHeight;
       }
     };
-    /** 段落是否可提交：``` 围栏成对且 \( \) \[ \] 各自闭合 */
-    const paragraphReady = (t: string): boolean => {
-      let fences = 0;
-      for (const line of t.split("\n")) if (line.trimStart().startsWith("```")) fences++;
-      if (fences % 2 !== 0) return false;
-      return (
-        (t.split("\\(").length - 1) === (t.split("\\)").length - 1) &&
-        (t.split("\\[").length - 1) === (t.split("\\]").length - 1)
-      );
-    };
-    /** 按 \n\n 切分 pending：可提交的段落渲染为 Markdown，尾部未完整段落保留纯文本 */
+    /** 按 \n\n 切分 pending：可提交的段落渲染为 Markdown，尾部未完整段落保留纯文本（纯逻辑在 viewlogic.ts，可单测） */
     const flushStreamRender = () => {
       lastRenderAt = Date.now();
       if (!pending) return;
-      const parts = pending.split("\n\n");
-      const done: string[] = [];
-      let rest = "";
-      for (let i = 0; i < parts.length; i++) {
-        if (i < parts.length - 1 && paragraphReady(parts[i])) {
-          done.push(parts[i]);
-        } else {
-          // 未闭合段落（含其后所有内容）整体保留：围栏/公式可能在跨段之后才闭合
-          rest = parts.slice(i).join("\n\n");
-          break;
-        }
-      }
+      const { done, rest } = splitCommittableParagraphs(pending);
       if (done.length > 0) {
         pending = rest;
         for (const p of done) {
@@ -2613,62 +2593,18 @@ export class TutorView extends ItemView {
     this.appendMessageRaw(msg);
   }
 
-  /** 扫描回答中的引用标记【📖 文件:行】→ 可点击按钮（跳转教材行） */
+  /** 扫描回答中的引用标记【📖 文件:行】→ 可点击按钮（跳转教材行；DOM 逻辑在 viewlogic.ts） */
   private attachCitationButtons(container: HTMLElement) {
-    const re = /【📖\s*([^】]+?):(\d+)(?:-(\d+))?】/g;
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    const nodes: Text[] = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-    for (const node of nodes) {
-      const text = node.nodeValue ?? "";
-      if (!text.includes("【📖")) continue;
-      const frag = document.createDocumentFragment();
-      let last = 0;
-      let m: RegExpExecArray | null;
-      re.lastIndex = 0;
-      let replaced = 0;
-      while ((m = re.exec(text)) !== null) {
-        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-        const file = m[1].trim();
-        const line = parseInt(m[2], 10);
-        const btn = document.createElement("button");
-        btn.className = "edge-tutor-cite-btn";
-        btn.textContent = `📖 ${file}:${line}`;
-        btn.addEventListener("click", () => void this.navigateToTextAnchor(file, "", line));
-        frag.appendChild(btn);
-        replaced++;
-        last = m.index + m[0].length;
-      }
-      if (replaced > 0) {
-        frag.appendChild(document.createTextNode(text.slice(last)));
-        node.replaceWith(frag);
-      }
-    }
+    attachCitationButtonsDOM(container, (ref) => void this.navigateToTextAnchor(ref.file, "", ref.line));
   }
 
-  /** 代码块 hover 复制按钮（P2-5）：在 MarkdownRenderer.render 完成后调用 */
+  /** 代码块 hover 复制按钮（P2-5）：在 MarkdownRenderer.render 完成后调用；DOM 逻辑在 viewlogic.ts */
   private attachCodeCopyButtons(container: HTMLElement) {
-    for (const pre of Array.from(container.querySelectorAll("pre"))) {
-      if (pre.querySelector(".edge-tutor-code-copy")) continue;
-      const code = pre.querySelector("code");
-      if (!code) continue;
-      pre.classList.add("edge-tutor-code-block");
-      const btn = document.createElement("button");
-      btn.className = "edge-tutor-code-copy";
-      btn.textContent = "📋";
-      btn.setAttribute("title", "复制代码");
-      btn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(code.textContent ?? "");
-          new Notice("已复制代码");
-        } catch (err) {
-          console.error("复制代码失败", err);
-          new Notice("复制失败，请手动选择复制");
-        }
-      });
-      pre.appendChild(btn);
-    }
+    attachCodeCopyButtonsDOM(
+      container,
+      (msg) => new Notice(msg),
+      (e) => console.error("复制代码失败", e),
+    );
   }
 
   private scrollToBottom() {

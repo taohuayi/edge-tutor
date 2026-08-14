@@ -12,6 +12,8 @@ import { atToken } from "./ai";
 export class NoteSuggest extends AbstractInputSuggest<TFile> {
   private textarea: HTMLTextAreaElement;
   private onChoose: (file: TFile) => void;
+  /** 当前查询（renderSuggestion 高亮命中片段用） */
+  private currentQuery = "";
 
   constructor(app: App, textarea: HTMLTextAreaElement, onChoose: (file: TFile) => void) {
     super(app, textarea as unknown as HTMLInputElement);
@@ -45,14 +47,32 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
 
   protected getSuggestions(query: string): TFile[] {
     const q = query.toLowerCase();
+    this.currentQuery = q;
+    // 命中排序：标题命中优先于路径命中，再按标题中文排序（更符合直觉）
     return this.app.vault
       .getMarkdownFiles()
-      .filter((f) => !q || f.basename.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
+      .filter((f) => !q || f.basename.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const ab = a.basename.toLowerCase().includes(q) ? 0 : 1;
+        const bb = b.basename.toLowerCase().includes(q) ? 0 : 1;
+        if (ab !== bb) return ab - bb;
+        return a.basename.localeCompare(b.basename, "zh");
+      });
   }
 
   renderSuggestion(file: TFile, el: HTMLElement): void {
     el.empty();
-    el.createDiv({ cls: "suggestion-title", text: file.basename });
+    const title = el.createDiv({ cls: "suggestion-title" });
+    const q = this.currentQuery;
+    const idx = q ? file.basename.toLowerCase().indexOf(q) : -1;
+    if (idx >= 0) {
+      // 高亮标题中的命中片段（<mark>）
+      title.appendText(file.basename.slice(0, idx));
+      title.createEl("mark", { text: file.basename.slice(idx, idx + q.length) });
+      title.appendText(file.basename.slice(idx + q.length));
+    } else {
+      title.setText(file.basename);
+    }
     const folder = file.parent && file.parent.path !== "/" ? file.parent.path : "";
     if (folder) el.createDiv({ cls: "suggestion-note", text: folder });
   }

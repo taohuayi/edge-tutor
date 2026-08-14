@@ -13,7 +13,7 @@ const outDir = path.join(root, "test", ".build");
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 
-const modules = ["canvas", "conv", "export", "guide", "tutor", "search", "ai", "vector", "fetchshim"];
+const modules = ["canvas", "conv", "export", "guide", "tutor", "search", "ai", "vector", "fetchshim", "viewlogic"];
 
 await Promise.all(
   modules.map((m) =>
