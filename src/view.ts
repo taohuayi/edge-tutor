@@ -695,11 +695,24 @@ export class TutorView extends ItemView {
   }
 
   private appendWelcome() {
-    this.appendMessageRaw({
-      role: "assistant",
-      content:
-        "我是你的认知边缘导师。\n\n**怎么用：**\n1. 在教材里选中一段文字 → 蓝色「由此追问」按钮\n2. 或直接在下面对话框提问\n\n**可以问我：**\n- 「为什么这里要构造辅助函数？」（追根）\n- 「这个定理的边界条件去掉会怎样？」（反例）\n- 点「🧭 方向指引」让 AI 基于全书推荐下一堵值得撞的墙\n- 有暂时不想处理的疑问？点「📌 停车场」\n\n记住：你随时可以停，我不会拉你回来。",
+    // 空态引导页（v0.10.0）：替换原来的伪消息气泡，第一印象更干净
+    const hero = this.msgContainer.createEl("div", { cls: "edge-tutor-empty" });
+    hero.createEl("div", { cls: "edge-tutor-empty-icon", text: "🌳" });
+    hero.createEl("div", { cls: "edge-tutor-empty-title", text: "认知边缘导师" });
+    hero.createEl("div", {
+      cls: "edge-tutor-empty-sub",
+      text: "在教材里选中一段文字 → 点「由此追问」，或直接在下方输入框提问。",
     });
+    const tips = hero.createEl("ul", { cls: "edge-tutor-empty-tips" });
+    for (const t of [
+      "「为什么这里要构造辅助函数？」——追根",
+      "「去掉这个边界条件会怎样？」——反例",
+      "点 🧭 方向指引：让 AI 基于全书推荐下一堵值得撞的墙",
+      "有暂时不想处理的疑问？点 📌 停车场",
+      "你可以随时停，我不会拉你回来",
+    ]) {
+      tips.createEl("li", { text: t });
+    }
   }
 
   /** ===== 锚点定位（Obsidian markdown 文本锚点，替代 Zotero PDF 框选） ===== */
