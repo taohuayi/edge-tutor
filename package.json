@@ -1,6 +1,6 @@
 {
   "name": "edge-tutor",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "认知边缘导师：选中教材文本追问 AI（价值识别器，绝不拉回）+ 执行模式 agent（委托 opencode 全能力执行）。沉淀认知节点笔记 + 原理链认知地图",
   "main": "main.js",
   "scripts": {

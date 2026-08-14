@@ -18,13 +18,13 @@ import { TutorSettings, ChatMessage, buildSystemPrompt, streamCompletion, buildN
 import { buildGuideSystemPrompt, parseGuideResponse, GuideEntry, GuideMode, CognitiveMapSummary } from "./guide";
 import { SearchHit } from "./search";
 import { parkQuestion, takeParked, makeNodeTitle, buildNodeContent } from "./tutor";
-import { mindMapLayout, layoutToCoordinates, buildEdgePath, MindMapThread } from "./canvas";
 import { NoteSuggest } from "./suggest";
 import { splitCommittableParagraphs, attachCitationButtonsDOM, attachCodeCopyButtonsDOM, normalizeMath, buildGuideEntryBox, buildMsgActBar } from "./viewlogic";
 import { PromptModal, ConfirmModal, ClearModal, ScopeModal } from "./modals";
+import { initMapPanDOM, renderMindMap, MapRenderHost } from "./maprender";
 import {
   Conv, ConvMessage, ConvThread, freshConv, pushMessage, addThread, ancestry, activeThread,
-  collectSubtree, reparentThread, switchThread, pauseActive, removeMessage, orderedThreads,
+  switchThread, pauseActive, removeMessage, orderedThreads,
   messagesForView, messageLineId, searchConversation, branchInstruction, finishAnswer,
   cognitiveMapSummary, serializeConv, resolveParentTitle,
 } from "./conv";
@@ -1876,360 +1876,52 @@ export class TutorView extends ItemView {
     if (node.id && node.id === this.currentWorkspace) row.addClass("is-current");
   }
 
-  /** 导图平移/滚动（Zotero：拖空白平移 + wheel 横向滚动） */
+  /** 导图平移/滚动（Zotero：拖空白平移 + wheel 横向滚动；实现已迁至 maprender.ts） */
   private initMapPan() {
-    const map = this.mapContainer;
-    map.addEventListener("wheel", (event) => {
-      const delta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
-      if (!delta) return;
-      if (map.scrollWidth <= map.clientWidth) return;
-      event.preventDefault();
-      map.scrollLeft += delta;
-    }, { passive: false });
-
-    let dragging = false;
-    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
-    map.addEventListener("mousedown", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest("button")) return;
-      if (target.closest(".edge-tutor-map-node")) return;
-      dragging = true;
-      startX = event.clientX;
-      startY = event.clientY;
-      startLeft = map.scrollLeft;
-      startTop = map.scrollTop;
-      map.classList.add("dragging");
-      event.preventDefault();
-    });
-    map.addEventListener("mousemove", (event) => {
-      if (!dragging) return;
-      map.scrollLeft = startLeft - (event.clientX - startX);
-      map.scrollTop = startTop - (event.clientY - startY);
-    });
-    const stop = () => {
-      if (!dragging) return;
-      dragging = false;
-      map.classList.remove("dragging");
-    };
-    map.addEventListener("mouseup", stop);
-    map.addEventListener("mouseleave", stop);
+    initMapPanDOM(this.mapContainer);
   }
 
-  /** ===== 思维导图（Zotero renderWorkflow） ===== */
+  /** ===== 思维导图（Zotero renderWorkflow；实现已迁至 maprender.ts，C5 第三步） ===== */
   private async renderWorkflow() {
-    const conv = this.conv;
-    const state = conv.reading;
-    if (!conv || state.threads.length === 0) {
-      this.mapContainer.style.display = "none";
-      this.mapTitle.style.display = "none";
-      return;
-    }
-
-    const threads: MindMapThread[] = state.threads.map((t) => ({
-      id: t.id,
-      title: t.title || t.rootQuestion,
-      parentId: t.parentId,
-      status: t.status,
-    }));
-    const layout = mindMapLayout(threads);
-    const { positions, canvasWidth, canvasHeight } = layoutToCoordinates(layout);
-
-    this.mapContainer.style.display = "block";
-    this.mapContainer.empty();
-    this.mapTitle.style.display = "block";
-    this.mapTitle.textContent = `🧭 思维导图 · 纵向主干与分支（${state.threads.length} 个节点）`;
-
-    const NODE_W = 150;
-    const NODE_H = 48;
-    const ns = "http://www.w3.org/2000/svg";
-
-    // 画布层：全部用原生 DOM 创建，消除对 Obsidian 增强 API / max-content 的依赖
-    const canvas = document.createElement("div");
-    canvas.className = "edge-tutor-map-canvas";
-    canvas.style.position = "relative";
-    canvas.style.width = canvasWidth + "px";
-    canvas.style.height = canvasHeight + "px";
-    this.mapContainer.appendChild(canvas);
-
-    const activePath = new Set(ancestry(conv, state.activeId).map((t) => t.id));
-
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("width", String(canvasWidth));
-    svg.setAttribute("height", String(canvasHeight));
-    svg.setAttribute("viewBox", `0 0 ${canvasWidth} ${canvasHeight}`);
-    svg.setAttribute("class", "edge-tutor-map-links");
-    for (const edge of layout.edges) {
-      const from = positions.get(edge.from);
-      const to = positions.get(edge.to);
-      if (!from || !to) continue;
-      const path = document.createElementNS(ns, "path");
-      path.setAttribute("d", buildEdgePath(from.x, from.y, to.x, to.y, NODE_W, NODE_H));
-      const active = activePath.has(edge.from) && activePath.has(edge.to);
-      path.setAttribute("class", "edge-tutor-map-link" + (active ? " active" : ""));
-      svg.appendChild(path);
-    }
-    canvas.appendChild(svg);
-
-    for (const p of layout.nodes) {
-      const point = positions.get(p.thread.id);
-      if (!point) continue;
-      const t = state.threads.find((x) => x.id === p.thread.id);
-      if (!t) continue;
-      const childrenCount = layout.edges.filter((e) => e.from === t.id).length;
-      const cls = [
-        "edge-tutor-map-node",
-        p.column === 0 ? "root" : "",
-        childrenCount > 1 ? "branch" : "",
-        t.id === state.activeId ? "active" : "",
-        t.status === "paused" ? "paused" : "",
-        t.title && t.title !== t.rootQuestion ? "renamed" : "",
-        t.mastery === "mastered" ? "mastered" : "",
-      ].filter(Boolean).join(" ");
-      const node = document.createElement("div");
-      node.className = cls;
-      node.setAttribute("data-thread-id", t.id);
-      node.style.position = "absolute";
-      node.style.left = point.x + "px";
-      node.style.top = point.y + "px";
-      node.style.width = NODE_W + "px";
-      node.style.height = NODE_H + "px";
-      node.setAttribute("aria-level", String(p.column + 1));
-      node.setAttribute(
-        "title",
-        `原始问题：${t.rootQuestion || t.title || "—"}` +
-          (t.anchor?.quote ? `\n锚定：${t.anchor.quote.slice(0, 60)}` : "") +
-          (t.summary ? `\n\n摘要：${t.summary.slice(0, 100)}` : "") +
-          "\n\n拖拽可调整层级：拖到另一节点上=变为其子节点，拖到空白=回到主干。"
-      );
-      const label = document.createElement("span");
-      label.className = "edge-tutor-map-node-title";
-      label.textContent = t.title || t.rootQuestion;
-      node.appendChild(label);
-      canvas.appendChild(node);
-
-      // 操作按钮（Zotero act()）
-      const actions = document.createElement("div");
-      actions.className = "edge-tutor-map-acts";
-      node.appendChild(actions);
-      const act = (labelText: string, tip: string, handler: () => void | Promise<void>, danger = false) => {
-        const b = document.createElement("button");
-        b.textContent = labelText;
-        b.className = "edge-tutor-map-act" + (danger ? " danger" : "");
-        b.setAttribute("title", tip);
-        b.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (this.busy) return;
-          void handler();
-        });
-        actions.appendChild(b);
-      };
-      act("➕", "在此节点下插入一个新问题节点", async () => {
-        const q = await new PromptModal(this.app, `新问题节点（挂在「${t.title || t.rootQuestion}」之下）`).openPrompt();
-        if (q == null) return;
-        addThread(conv, { question: q, parentId: t.id, anchor: this.plugin.getAnchor() });
-        await this.plugin.saveConv(conv);
-        this.renderAll();
-        this.inputEl.placeholder = "向这个新问题提问…";
-        this.inputEl.focus();
-      });
-      act("✏️", "改写标题（原始问题仍保留）", async () => {
-        const v = await new PromptModal(this.app, "改写节点标题（原始问题不变）", "", t.title || t.rootQuestion).openPrompt();
-        if (v == null || v === t.title) return;
-        t.title = v;
-        t.updatedAt = new Date().toISOString();
-        await this.plugin.saveConv(conv);
-        this.renderAll();
-      });
-      act("🔒", t.mastery === "mastered" ? "已封顶，点击取消" : "此链封顶（导引暂不深化此链，可随时取消）", async () => {
-        t.mastery = t.mastery === "mastered" ? "exploring" : "mastered";
-        t.updatedAt = new Date().toISOString();
-        await this.plugin.saveConv(conv);
-        // 持久化到节点 frontmatter（重建会话时恢复封顶状态）
-        await this.plugin.setNodeLocked(this.currentWorkspace, t.title, t.mastery === "mastered");
-        this.renderAll();
-        this.setStatus(t.mastery === "mastered" ? `「${t.title}」已封顶（导引将聚焦其他链）` : `「${t.title}」已解除封顶`);
-      });
-      act("📋", "复制此节点及其全部分支", () => {
-        const subtree = collectSubtree(conv, t.id);
-        const ids = new Set(subtree.map((s) => s.id));
-        this.branchClipboard = subtree;
-        this.branchClipboardWs = this.currentWorkspace;
-        this.branchClipboardMessages = conv.messages.filter((m) => m.lineId && ids.has(m.lineId));
-        this.setStatus(`已复制 ${subtree.length} 个节点（含 ${this.branchClipboardMessages.length} 条消息），在任何节点上点「粘贴」可挂入`);
-      });
-      act("📌", "将剪贴板节点粘贴为此节点的子节点", async () => {
-        if (this.branchClipboard.length === 0) {
-          this.setStatus("剪贴板为空：先在某个节点上点「复制」。");
-          return;
-        }
-        const idMap = new Map<string, string>();
-        for (const src of this.branchClipboard) {
-          const newId = "q" + (++conv.reading.sequence);
-          idMap.set(src.id, newId);
-          const isRootOfBranch = src.parentId === this.branchClipboard[0].id;
-          const newParent = isRootOfBranch ? t.id : idMap.get(src.parentId ?? "") ?? src.parentId;
-          conv.reading.threads.push({
-            ...src,
-            id: newId,
-            parentId: newParent,
-            nodeFile: undefined, // 剥离源工作区 nodeFile（粘贴后是新线程，不指向源文件）
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        // 粘贴消息（复制分支带消息）
-        if (this.branchClipboardMessages.length > 0) {
-          for (const srcMsg of this.branchClipboardMessages) {
-            const newLine = srcMsg.lineId ? idMap.get(srcMsg.lineId) ?? srcMsg.lineId : undefined;
-            pushMessage(conv, srcMsg.role, srcMsg.content, { anchor: srcMsg.anchor, lineId: newLine });
-          }
-        }
-        await this.plugin.saveConv(conv);
-        this.renderAll();
-        this.setStatus(`已粘贴 ${this.branchClipboard.length} 个节点到「${t.title}」之下`);
-        // 跨工作区移动：提示删除源工作区的节点
-        const srcWs = this.branchClipboardWs;
-        const srcIds = this.branchClipboard.map((s) => s.id);
-        if (srcWs && srcWs !== this.currentWorkspace && srcIds.length > 0) {
-          const srcTitles = this.branchClipboard.map((s) => s.title || s.rootQuestion).slice(0, 3).join("、");
-          const modal = new ConfirmModal(this.app, "删除源工作区的节点？", [
-            `已把分支粘贴到「${this.currentWorkspace}」。`,
-            `是否同时删除「${srcWs}」中的 ${srcIds.length} 个源节点（${srcTitles}${this.branchClipboard.length > 3 ? "…" : ""}）？`,
-            "删除会连带移除消息和节点文件（进回收站）。",
-          ].join("\n"));
-          modal.onConfirm = async () => {
-            const n = await this.plugin.deleteThreadsWithFiles(srcWs, srcIds);
-            new Notice(`已从「${srcWs}」删除 ${n} 个源节点`);
-          };
-          modal.open();
-        }
-      });
-      act("📝", "改写摘要（理解沉淀）", async () => {
-        const v = await new PromptModal(this.app, "改写摘要（理解沉淀）", "", t.summary || "").openPrompt();
-        if (v == null) return;
-        t.summary = v;
-        t.updatedAt = new Date().toISOString();
-        await this.plugin.saveConv(conv);
-        this.renderAll();
-      });
-      act("🗑️", "删除此节点及其全部分支（含消息与节点文件，进回收站）", async () => {
-        const subtree = collectSubtree(conv, t.id);
-        const ids = subtree.map((s) => s.id);
-        const modal = new ConfirmModal(
-          this.app,
-          "删除节点？",
-          `删除「${t.title || t.rootQuestion}」及其 ${ids.length - 1} 个子分支？\n将同步删除消息与节点文件（进回收站可找回）。`,
-          "确认删除"
-        );
-        modal.onConfirm = async () => {
-          // 三处同步删除：线程 + 消息 + 节点文件（内部已保存 conv）
-          await this.plugin.deleteThreadsWithFiles(this.currentWorkspace, ids);
-          this.conv = await this.plugin.loadConv(this.currentWorkspace);
-          this.renderAll();
-          this.setStatus(`已删除 ${ids.length} 个节点（含消息与文件）`);
-        };
-        modal.open();
-      });
-
-      // 拖拽重组（Zotero：拖到节点=变子，拖空白=回主干）
-      this.attachDrag(conv, node, t, point.x, point.y, canvas);
-
-      // 点击 → 切换活跃线程
-      node.addEventListener("click", (e) => {
-        if (this.busy) return;
-        if ((e.target as HTMLElement).closest(".edge-tutor-map-act")) return;
-        if (t.id === state.activeId) return;
-        switchThread(conv, t.id);
-        this.branchNext = false;
-        void this.plugin.saveConv(conv);
-        this.renderAll();
-        this.inputEl.placeholder = "继续这条思路…";
-        this.inputEl.focus();
-      });
-    }
-
-    // 自动定位活跃节点（Zotero mapLocate）
-    const activePoint = positions.get(state.activeId ?? "");
-    const mapLocate = !this.lastRenderedMapId || this.lastRenderedMapId !== state.activeId;
-    if (activePoint && mapLocate) {
-      this.mapContainer.scrollLeft = Math.max(0, activePoint.x - Math.max(0, (this.mapContainer.clientWidth - NODE_W) / 2));
-      this.mapContainer.scrollTop = Math.max(0, activePoint.y - 54);
-    }
-    this.lastRenderedMapId = state.activeId;
-    this.scrollToBottom();
+    await renderMindMap(this.mapHost(), this.conv);
   }
 
-  /** 拖拽重组（Zotero pointerdown 移植） */
-  private attachDrag(
-    conv: Conv,
-    node: HTMLElement,
-    thread: ConvThread,
-    origX: number,
-    origY: number,
-    canvas: HTMLElement
-  ) {
-    let drag: { startX: number; startY: number; origLeft: number; origTop: number; moved: boolean } | null = null;
-    let suppressClick = false;
-
-    node.addEventListener("pointerdown", (e) => {
-      if (this.busy) return;
-      if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest(".edge-tutor-map-act")) return;
-      drag = {
-        startX: e.clientX,
-        startY: e.clientY,
-        origLeft: origX,
-        origTop: origY,
-        moved: false,
-      };
-
-      const onMove = (ev: PointerEvent) => {
-        if (!drag) return;
-        const dx = ev.clientX - drag.startX;
-        const dy = ev.clientY - drag.startY;
-        if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 5) {
-          drag.moved = true;
-          node.classList.add("dragging");
-        }
-        if (!drag.moved) return;
-        node.style.left = drag.origLeft + dx + "px";
-        node.style.top = drag.origTop + dy + "px";
-        canvas.querySelectorAll(".edge-tutor-map-node.drop-target").forEach((n) => n.classList.remove("drop-target"));
-        const target = dropTargetAt(canvas, ev.clientX, ev.clientY);
-        if (target && target.getAttribute("data-thread-id") !== thread.id) {
-          target.classList.add("drop-target");
-        }
-      };
-      const onUp = (ev: PointerEvent) => {
-        document.removeEventListener("pointermove", onMove);
-        document.removeEventListener("pointerup", onUp);
-        if (drag?.moved) suppressClick = true;
-        const target = dropTargetAt(canvas, ev.clientX, ev.clientY);
-        const targetId = target ? target.getAttribute("data-thread-id") : null;
-        if (targetId && targetId !== thread.id) {
-          if (reparentThread(conv, thread.id, targetId)) {
-            void this.plugin.saveConv(conv);
-            this.renderAll();
-          }
-        } else if (!targetId && thread.parentId) {
-          if (reparentThread(conv, thread.id, null)) {
-            void this.plugin.saveConv(conv);
-            this.renderAll();
-          }
-        }
-        drag = null;
-      };
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-    });
-
-    node.addEventListener("click", (e) => {
-      if (suppressClick) {
-        suppressClick = false;
-        return;
-      }
-      void e;
-    });
+  /** maprender.ts 的宿主适配器（依赖注入，保持私有字段隔离） */
+  private mapHost(): MapRenderHost {
+    return {
+      app: this.app,
+      plugin: this.plugin,
+      isBusy: () => this.busy,
+      rerender: () => {
+        void this.renderAll();
+      },
+      reloadConv: async () => {
+        this.conv = await this.plugin.loadConv(this.currentWorkspace);
+      },
+      clearBranchIntent: () => {
+        this.branchNext = false;
+      },
+      setStatus: (text) => this.setStatus(text),
+      inputEl: this.inputEl,
+      getWorkspace: () => this.currentWorkspace,
+      getBranchClipboard: () => ({
+        threads: this.branchClipboard,
+        ws: this.branchClipboardWs,
+        messages: this.branchClipboardMessages,
+      }),
+      setBranchClipboard: (c) => {
+        this.branchClipboard = c.threads;
+        this.branchClipboardWs = c.ws;
+        this.branchClipboardMessages = c.messages;
+      },
+      getLastMapId: () => this.lastRenderedMapId,
+      setLastMapId: (id) => {
+        this.lastRenderedMapId = id;
+      },
+      mapContainer: this.mapContainer,
+      mapTitle: this.mapTitle,
+      scrollToBottom: () => this.scrollToBottom(),
+    };
   }
 
   /** 选中文本浮动按钮 */
@@ -2616,18 +2308,4 @@ export class TutorView extends ItemView {
     await this.renderAll();
     return this.msgContainer.querySelector(`[data-msg-index="${messageIndex}"]`) as HTMLElement | null;
   }
-}
-
-/** 拖拽落点检测 */
-function dropTargetAt(canvas: HTMLElement, clientX: number, clientY: number): HTMLElement | null {
-  const els = Array.from(canvas.querySelectorAll(".edge-tutor-map-node"));
-  for (const n of els) {
-    const node = n as HTMLElement;
-    if (node.classList.contains("dragging")) continue;
-    const r = node.getBoundingClientRect();
-    if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-      return node;
-    }
-  }
-  return null;
 }
