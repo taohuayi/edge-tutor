@@ -8,6 +8,7 @@ import {
   paragraphReady,
   splitCommittableParagraphs,
   parseCiteRef,
+  normalizeMath,
 } from "./.build/viewlogic.cjs";
 
 test("paragraphReady：围栏成对且公式闭合 → true", () => {
@@ -48,4 +49,14 @@ test("parseCiteRef：解析【📖 文件:行】与区间", () => {
   assert.deepEqual(parseCiteRef("见【📖 a/b/第2讲.md:12-20】"), { file: "a/b/第2讲.md", line: 12 });
   assert.equal(parseCiteRef("没有引用"), null);
   assert.equal(parseCiteRef("【📖 无行号.md】"), null);
+});
+
+test("normalizeMath：行内/块级公式转 Obsidian MathJax 格式", () => {
+  assert.equal(normalizeMath("行内 \\(x^2\\) 公式"), "行内 $x^2$ 公式");
+  assert.equal(normalizeMath("块级 \\[x^2\\] 公式"), "块级 $$x^2$$ 公式");
+});
+
+test("normalizeMath：半截括号兜底（不破坏普通文本）", () => {
+  assert.equal(normalizeMath("普通文本无公式"), "普通文本无公式");
+  assert.equal(normalizeMath("半截 \\(x"), "半截 $x");
 });

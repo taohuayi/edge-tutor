@@ -1,5 +1,5 @@
 /**
- * view.ts 提取的纯逻辑与 DOM 后处理助手（C5 分层第一步，v0.10.1）
+ * view.ts 提取的纯逻辑与 DOM 后处理助手（C5 分层，v0.10.1 起）
  * 分层铁律：本模块零 obsidian 依赖（纯函数 + DOM 操作，回调注入），
  * 可被 esbuild bundle 后由 node 单测覆盖。
  */
@@ -127,3 +127,88 @@ export function attachCodeCopyButtonsDOM(
     pre.appendChild(btn);
   }
 }
+
+/* ===== C5 第二步新增（v0.10.2） ===== */
+
+/** 公式格式转换：\(...\) → $...$，\[...\] → $$...$$（Obsidian MathJax 兼容） */
+export function normalizeMath(text: string): string {
+  let out = text;
+  out = out.replace(/\\\[[\s\S]*?\\\]/g, (m) => "$$" + m.slice(2, -2).trim() + "$$");
+  out = out.replace(/\\\(([^\\]*?)\\\)/g, (m) => "$" + m.slice(2, -2).trim() + "$");
+  out = out.replace(/\\\(/g, "$").replace(/\\\)/g, "$");
+  out = out.replace(/\\\[/g, "$$").replace(/\\\]/g, "$$");
+  return out;
+}
+
+/** 方向指引入口卡片（guide entries）DOM 构建；onStart 由 view 层注入状态变更 */
+export interface GuideEntryLike {
+  type: string;
+  id: string;
+  title: string;
+  jiang?: string;
+  anchorNode?: string;
+  question?: string;
+  direction?: string;
+  whyWorthExploring?: string;
+  entryPoint?: string;
+  tensions?: string[];
+  connections?: string[];
+  possibleTrails?: string[];
+  anchor?: string;
+}
+
+export function buildGuideEntryBox(
+  entry: GuideEntryLike,
+  opts: { isBusy: () => boolean; onStart: (entry: GuideEntryLike) => void },
+): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "edge-tutor-entry";
+  const heading = box.createEl("h5");
+  heading.createSpan({
+    text: entry.type === "deepen" ? "🔻 深化" : "🆕 新域",
+    cls: "edge-tutor-entry-badge" + (entry.type === "deepen" ? " deepen" : ""),
+  });
+  heading.createSpan({ text: entry.id + " " + entry.title });
+  if (entry.jiang) heading.createSpan({ text: " · " + entry.jiang, cls: "edge-tutor-entry-meta" });
+  const rows: [string, string][] = [];
+  if (entry.type === "deepen" && entry.anchorNode) rows.push(["锚定节点", "[[" + entry.anchorNode + "]]"]);
+  if (entry.question) rows.push(["下一堵墙", entry.question]);
+  if (entry.direction) rows.push(["延伸方向", entry.direction]);
+  if (entry.whyWorthExploring) rows.push(["为什么值得追", entry.whyWorthExploring]);
+  if (entry.entryPoint) rows.push(["自然切入口", entry.entryPoint]);
+  if ((entry.tensions ?? []).length) rows.push(["关键张力", (entry.tensions ?? []).join("；")]);
+  if ((entry.connections ?? []).length) rows.push(["可连接", (entry.connections ?? []).join("；")]);
+  if ((entry.possibleTrails ?? []).length) rows.push(["可能尾迹", (entry.possibleTrails ?? []).join("；")]);
+  if (entry.anchor) rows.push(["教材锚点", entry.anchor]);
+  for (const [k, v] of rows) {
+    const line = box.createEl("p", { cls: "edge-tutor-entry-row" });
+    line.createEl("strong", { text: k + "：" });
+    line.createSpan({ text: v });
+  }
+  const start = box.createEl("button", { text: "从这里开始探索", cls: "edge-tutor-entry-start" });
+  start.addEventListener("click", () => {
+    if (opts.isBusy()) return;
+    opts.onStart(entry);
+  });
+  return box;
+}
+
+/** 消息 hover 操作条构建（📋 复制 / ✏️ 编辑 / 🔄 重新生成 / 🗑️ 删除） */
+export function buildMsgActBar(
+  host: HTMLElement,
+  buttons: { label: string; tip: string; handler: () => void | Promise<void>; danger?: boolean }[],
+): void {
+  const acts = host.createEl("div", { cls: "edge-tutor-msg-acts" });
+  for (const btn of buttons) {
+    const b = acts.createEl("button", {
+      text: btn.label,
+      cls: "edge-tutor-msg-act" + (btn.danger ? " danger" : ""),
+      attr: { title: btn.tip },
+    });
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void btn.handler();
+    });
+  }
+}
+

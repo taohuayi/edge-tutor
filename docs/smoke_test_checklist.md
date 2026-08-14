@@ -8,7 +8,7 @@
 纯函数层（canvas/conv/export/guide/tutor）由 `node:test` 覆盖，改这些模块前先跑：
 
 ```bash
-npm test        # 构建测试 bundle + 跑 55 个用例（零依赖）
+npm test        # 构建测试 bundle + 跑 137 个用例（零依赖）
 ```
 
 - 测试文件：`test/*.test.mjs`（import `test/.build/*.cjs`，由 `scripts/build-tests.mjs` 生成）

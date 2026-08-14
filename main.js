@@ -44826,7 +44826,7 @@ __export(main_exports, {
   default: () => EdgeTutorPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/ai.ts
 var PRESET_PROVIDERS = [
@@ -46978,7 +46978,7 @@ function uniqueNodePath(app, folder, title) {
 }
 
 // src/view.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/guide.ts
 function buildGuideSystemPrompt(scope = "whole", mode = "mixed") {
@@ -47319,11 +47319,244 @@ function attachCodeCopyButtonsDOM(container, notify, onError) {
     pre.appendChild(btn);
   }
 }
+function normalizeMath(text) {
+  let out = text;
+  out = out.replace(/\\\[[\s\S]*?\\\]/g, (m) => "$$" + m.slice(2, -2).trim() + "$$");
+  out = out.replace(/\\\(([^\\]*?)\\\)/g, (m) => "$" + m.slice(2, -2).trim() + "$");
+  out = out.replace(/\\\(/g, "$").replace(/\\\)/g, "$");
+  out = out.replace(/\\\[/g, "$$").replace(/\\\]/g, "$$");
+  return out;
+}
+function buildGuideEntryBox(entry, opts) {
+  const box = document.createElement("div");
+  box.className = "edge-tutor-entry";
+  const heading = box.createEl("h5");
+  heading.createSpan({
+    text: entry.type === "deepen" ? "\u{1F53B} \u6DF1\u5316" : "\u{1F195} \u65B0\u57DF",
+    cls: "edge-tutor-entry-badge" + (entry.type === "deepen" ? " deepen" : "")
+  });
+  heading.createSpan({ text: entry.id + " " + entry.title });
+  if (entry.jiang) heading.createSpan({ text: " \xB7 " + entry.jiang, cls: "edge-tutor-entry-meta" });
+  const rows = [];
+  if (entry.type === "deepen" && entry.anchorNode) rows.push(["\u951A\u5B9A\u8282\u70B9", "[[" + entry.anchorNode + "]]"]);
+  if (entry.question) rows.push(["\u4E0B\u4E00\u5835\u5899", entry.question]);
+  if (entry.direction) rows.push(["\u5EF6\u4F38\u65B9\u5411", entry.direction]);
+  if (entry.whyWorthExploring) rows.push(["\u4E3A\u4EC0\u4E48\u503C\u5F97\u8FFD", entry.whyWorthExploring]);
+  if (entry.entryPoint) rows.push(["\u81EA\u7136\u5207\u5165\u53E3", entry.entryPoint]);
+  if ((entry.tensions ?? []).length) rows.push(["\u5173\u952E\u5F20\u529B", (entry.tensions ?? []).join("\uFF1B")]);
+  if ((entry.connections ?? []).length) rows.push(["\u53EF\u8FDE\u63A5", (entry.connections ?? []).join("\uFF1B")]);
+  if ((entry.possibleTrails ?? []).length) rows.push(["\u53EF\u80FD\u5C3E\u8FF9", (entry.possibleTrails ?? []).join("\uFF1B")]);
+  if (entry.anchor) rows.push(["\u6559\u6750\u951A\u70B9", entry.anchor]);
+  for (const [k3, v] of rows) {
+    const line = box.createEl("p", { cls: "edge-tutor-entry-row" });
+    line.createEl("strong", { text: k3 + "\uFF1A" });
+    line.createSpan({ text: v });
+  }
+  const start = box.createEl("button", { text: "\u4ECE\u8FD9\u91CC\u5F00\u59CB\u63A2\u7D22", cls: "edge-tutor-entry-start" });
+  start.addEventListener("click", () => {
+    if (opts.isBusy()) return;
+    opts.onStart(entry);
+  });
+  return box;
+}
+function buildMsgActBar(host, buttons) {
+  const acts = host.createEl("div", { cls: "edge-tutor-msg-acts" });
+  for (const btn of buttons) {
+    const b = acts.createEl("button", {
+      text: btn.label,
+      cls: "edge-tutor-msg-act" + (btn.danger ? " danger" : ""),
+      attr: { title: btn.tip }
+    });
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void btn.handler();
+    });
+  }
+}
+
+// src/modals.ts
+var import_obsidian4 = require("obsidian");
+var PromptModal = class extends import_obsidian4.Modal {
+  constructor(app, title, placeholder = "", initial = "") {
+    super(app);
+    this.placeholder = placeholder;
+    this.initial = initial;
+    this.titleEl.setText(title);
+  }
+  openPrompt() {
+    return new Promise((resolve) => {
+      this.resolve = resolve;
+      this.open();
+    });
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    const input = contentEl.createEl("input", {
+      type: "text",
+      attr: { placeholder: this.placeholder, value: this.initial }
+    });
+    input.addClass("edge-tutor-prompt-input");
+    input.focus();
+    input.select();
+    const submit = () => {
+      const v = input.value.trim();
+      this.resolve(v || null);
+      this.close();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+      if (e.key === "Escape") {
+        this.resolve(null);
+        this.close();
+      }
+    });
+    const btnRow = contentEl.createEl("div", { cls: "edge-tutor-prompt-btns" });
+    const okBtn = btnRow.createEl("button", { text: "\u786E\u5B9A", cls: "mod-cta" });
+    okBtn.addEventListener("click", submit);
+    const cancelBtn = btnRow.createEl("button", { text: "\u53D6\u6D88" });
+    cancelBtn.addEventListener("click", () => {
+      this.resolve(null);
+      this.close();
+    });
+  }
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+};
+var ConfirmModal = class extends import_obsidian4.Modal {
+  constructor(app, title, text, confirmText = "\u786E\u8BA4\u6E05\u7A7A") {
+    super(app);
+    this.onConfirm = () => {
+    };
+    this.text = text;
+    this.confirmText = confirmText;
+    this.titleEl.setText(title);
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("div", { text: this.text, cls: "edge-tutor-scope-desc" });
+    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    const ok = row.createEl("button", { text: this.confirmText, cls: "edge-tutor-mini mod-cta" });
+    ok.addEventListener("click", () => {
+      this.onConfirm();
+      this.close();
+    });
+    const cancel = row.createEl("button", { text: "\u53D6\u6D88", cls: "edge-tutor-mini" });
+    cancel.addEventListener("click", () => this.close());
+  }
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+};
+var ClearModal = class extends import_obsidian4.Modal {
+  constructor(app, hasUnsaved) {
+    super(app);
+    this.onBackupAndClear = () => {
+    };
+    this.onSaveAndClear = () => {
+    };
+    this.hasUnsaved = hasUnsaved;
+    this.titleEl.setText("\u6E05\u7A7A\u5F53\u524D\u5BF9\u8BDD\uFF1F");
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("div", {
+      text: [
+        "\u5C06\u5220\u9664\u5F53\u524D\u5DE5\u4F5C\u533A\u7684\u5168\u90E8\u5BF9\u8BDD\u8BB0\u5F55\u548C\u601D\u7EF4\u5BFC\u56FE\u7ED3\u6784\uFF08.conv.json\uFF09\u3002",
+        "\u5DF2\u6C89\u6DC0\u7684\u8282\u70B9\u7B14\u8BB0\uFF08.md \u6587\u4EF6\uFF09\u4E0D\u53D7\u5F71\u54CD\u3002",
+        this.hasUnsaved ? "\u26A0\uFE0F \u68C0\u6D4B\u5230\u6700\u8FD1\u7684\u5BF9\u8BDD\u8FD8\u6CA1\u6709\u6C89\u6DC0\u4E3A\u8282\u70B9\u3002" : "",
+        "\u65E0\u8BBA\u54EA\u79CD\u65B9\u5F0F\uFF0C\u6E05\u7A7A\u524D\u90FD\u4F1A\u81EA\u52A8\u5BFC\u51FA JSON \u5907\u4EFD\u5230 _exports/\uFF0C\u53EF\u968F\u65F6\u6062\u590D\u3002"
+      ].filter(Boolean).join("\n"),
+      cls: "edge-tutor-scope-desc"
+    });
+    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    if (this.hasUnsaved) {
+      const save = row.createEl("button", { text: "\u{1F4BE} \u5148\u6C89\u6DC0\u518D\u6E05\u5C4F", cls: "edge-tutor-mini mod-cta" });
+      save.addEventListener("click", () => {
+        this.onSaveAndClear();
+        this.close();
+      });
+    }
+    const backup = row.createEl("button", { text: "\u5907\u4EFD\u5E76\u6E05\u5C4F", cls: "edge-tutor-mini" });
+    backup.addEventListener("click", () => {
+      this.onBackupAndClear();
+      this.close();
+    });
+    const cancel = row.createEl("button", { text: "\u53D6\u6D88", cls: "edge-tutor-mini" });
+    cancel.addEventListener("click", () => this.close());
+  }
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+};
+var ScopeModal = class extends import_obsidian4.Modal {
+  constructor() {
+    super(...arguments);
+    /** 模式选择（null=未选，提交时默认混合） */
+    this.pendingMode = null;
+  }
+  openScope() {
+    return new Promise((resolve) => {
+      this.resolve = resolve;
+      this.open();
+    });
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    this.scope.register([], "Escape", () => this.closeResolve(null));
+    contentEl.createEl("h3", { text: "\u65B9\u5411\u6307\u5F15\u8BBE\u7F6E" });
+    contentEl.createEl("div", {
+      text: "\u5148\u9009\u6A21\u5F0F\uFF08\u70B9\u51FB\u9AD8\u4EAE\uFF09\uFF0C\u518D\u9009\u8303\u56F4\u786E\u5B9A\u3002\u4E0D\u9009\u6A21\u5F0F\u5219\u9ED8\u8BA4\u6DF7\u5408\u3002",
+      cls: "edge-tutor-scope-desc"
+    });
+    contentEl.createEl("h4", { text: "\u6A21\u5F0F" });
+    const modeRow = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    const mkModeBtn = (text, value) => {
+      const b = modeRow.createEl("button", { text, cls: "edge-tutor-mini" });
+      b.addEventListener("click", () => {
+        this.pendingMode = value;
+        modeRow.querySelectorAll("button").forEach((x) => x.removeClass("mod-cta"));
+        b.addClass("mod-cta");
+      });
+      return b;
+    };
+    mkModeBtn("\u6DF7\u5408\uFF08\u6DF1\u5316+\u65B0\u57DF\uFF09", "mixed");
+    mkModeBtn("\u{1F53B} \u6DF1\u5316\u5F53\u524D\u94FE", "deepen");
+    mkModeBtn("\u{1F195} \u5168\u4E66\u65B0\u57DF", "frontier");
+    contentEl.createEl("h4", { text: "\u8303\u56F4" });
+    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
+    const whole = row.createEl("button", { text: "\u{1F4D6} \u5168\u4E66\u8303\u56F4", cls: "edge-tutor-mini mod-cta" });
+    whole.addEventListener("click", () => this.pick("whole"));
+    const nearby = row.createEl("button", { text: "\u{1F4CD} \u5F53\u524D\u4F4D\u7F6E\u9644\u8FD1", cls: "edge-tutor-mini" });
+    nearby.addEventListener("click", () => this.pick("nearby"));
+    const cancel = row.createEl("button", { text: "\u53D6\u6D88", cls: "edge-tutor-mini" });
+    cancel.addEventListener("click", () => this.closeResolve(null));
+  }
+  pick(scope) {
+    this.resolve({ scope, mode: this.pendingMode ?? "mixed" });
+    this.close();
+  }
+  closeResolve(v) {
+    this.resolve(v);
+    this.close();
+  }
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+};
 
 // src/view.ts
 var VIEW_TYPE_TUTOR = "edge-tutor-view";
 var DRAFT_SAVE_DELAY_MS = 800;
-var TutorView = class extends import_obsidian4.ItemView {
+var TutorView = class extends import_obsidian5.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.conv = freshConv("main");
@@ -47430,7 +47663,7 @@ var TutorView = class extends import_obsidian4.ItemView {
       if (!name) return;
       const clean = name.replace(/[\\/:*?"<>|\s]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
       if (!clean) {
-        new import_obsidian4.Notice("\u5DE5\u4F5C\u533A\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+        new import_obsidian5.Notice("\u5DE5\u4F5C\u533A\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
         return;
       }
       await this.plugin.createWorkspace(clean);
@@ -47440,19 +47673,19 @@ var TutorView = class extends import_obsidian4.ItemView {
         this.plugin.settings.activeWorkspace = clean;
         await this.plugin.saveSettings();
       }
-      new import_obsidian4.Notice("\u5DF2\u521B\u5EFA\u65B0\u5DE5\u4F5C\u533A\uFF1A" + clean);
+      new import_obsidian5.Notice("\u5DF2\u521B\u5EFA\u65B0\u5DE5\u4F5C\u533A\uFF1A" + clean);
     });
     wsRenameBtn.addEventListener("click", async () => {
       const cur = this.currentWorkspace;
       if (cur === "main") {
-        new import_obsidian4.Notice("\u9ED8\u8BA4\u5DE5\u4F5C\u533A\u4E0D\u80FD\u6539\u540D\uFF1A\u8BF7\u5148\u65B0\u5EFA\u4E00\u4E2A\u5DE5\u4F5C\u533A");
+        new import_obsidian5.Notice("\u9ED8\u8BA4\u5DE5\u4F5C\u533A\u4E0D\u80FD\u6539\u540D\uFF1A\u8BF7\u5148\u65B0\u5EFA\u4E00\u4E2A\u5DE5\u4F5C\u533A");
         return;
       }
       const name = await new PromptModal(this.app, "\u91CD\u547D\u540D\u5DE5\u4F5C\u533A", "", cur).openPrompt();
       if (!name || name === cur) return;
       const clean = name.replace(/[\\/:*?"<>|\s]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
       if (!clean) {
-        new import_obsidian4.Notice("\u5DE5\u4F5C\u533A\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+        new import_obsidian5.Notice("\u5DE5\u4F5C\u533A\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
         return;
       }
       const finalId = await this.plugin.renameWorkspace(cur, clean);
@@ -47463,7 +47696,7 @@ var TutorView = class extends import_obsidian4.ItemView {
       if (this.plugin.settings.activeWorkspace === cur) this.plugin.settings.activeWorkspace = finalId;
       await this.plugin.saveSettings();
       await this.refreshWorkspaceSelect();
-      new import_obsidian4.Notice("\u5DF2\u91CD\u547D\u540D\u4E3A\uFF1A" + finalId);
+      new import_obsidian5.Notice("\u5DF2\u91CD\u547D\u540D\u4E3A\uFF1A" + finalId);
     });
     const viewRow = container.createEl("div", { cls: "edge-tutor-view-row" });
     viewRow.createEl("span", { text: "\u89C6\u56FE\uFF1A", cls: "edge-tutor-view-label" });
@@ -47498,9 +47731,9 @@ var TutorView = class extends import_obsidian4.ItemView {
       ocBtn.disabled = false;
       this.setStatus(r.message);
       if (r.ok) {
-        new import_obsidian4.Notice(r.message);
+        new import_obsidian5.Notice(r.message);
       } else {
-        new import_obsidian4.Notice("\u26A0\uFE0F " + r.message);
+        new import_obsidian5.Notice("\u26A0\uFE0F " + r.message);
       }
     });
     const searchBtn = tools.createEl("button", {
@@ -47596,7 +47829,7 @@ var TutorView = class extends import_obsidian4.ItemView {
       }
     });
     this.noteSuggest = new NoteSuggest(this.app, this.inputEl, (file) => {
-      new import_obsidian4.Notice(`\u5DF2\u5F15\u7528\u7B14\u8BB0\uFF1A${file.basename}\uFF08\u968F\u6D88\u606F\u53D1\u9001\u7ED9 AI\uFF09`);
+      new import_obsidian5.Notice(`\u5DF2\u5F15\u7528\u7B14\u8BB0\uFF1A${file.basename}\uFF08\u968F\u6D88\u606F\u53D1\u9001\u7ED9 AI\uFF09`);
     });
     this.statusBar = container.createEl("div", { cls: "edge-tutor-status" });
     this.initSelFloat();
@@ -47859,7 +48092,7 @@ var TutorView = class extends import_obsidian4.ItemView {
     if (!file) return null;
     const root = this.plugin.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
     for (const p of [file, root + "/" + file]) {
-      if (this.app.vault.getAbstractFileByPath(p) instanceof import_obsidian4.TFile) return p;
+      if (this.app.vault.getAbstractFileByPath(p) instanceof import_obsidian5.TFile) return p;
     }
     const name = file.split("/").pop() ?? file;
     const md2 = this.app.vault.getMarkdownFiles();
@@ -47871,23 +48104,23 @@ var TutorView = class extends import_obsidian4.ItemView {
   }
   async navigateToTextAnchor(sourcePath, quote, line) {
     let resolved = sourcePath;
-    if (!(this.app.vault.getAbstractFileByPath(sourcePath) instanceof import_obsidian4.TFile)) {
+    if (!(this.app.vault.getAbstractFileByPath(sourcePath) instanceof import_obsidian5.TFile)) {
       const r = this.resolveRefPath(sourcePath);
       if (!r) {
-        new import_obsidian4.Notice("\u951A\u70B9\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A" + sourcePath);
+        new import_obsidian5.Notice("\u951A\u70B9\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A" + sourcePath);
         return;
       }
       resolved = r;
     }
     const f = this.app.vault.getAbstractFileByPath(resolved);
-    if (!(f instanceof import_obsidian4.TFile)) {
-      new import_obsidian4.Notice("\u951A\u70B9\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A" + sourcePath);
+    if (!(f instanceof import_obsidian5.TFile)) {
+      new import_obsidian5.Notice("\u951A\u70B9\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A" + sourcePath);
       return;
     }
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(f);
     await new Promise((r) => setTimeout(r, 120));
-    const editor = this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)?.editor;
+    const editor = this.app.workspace.getActiveViewOfType(import_obsidian5.MarkdownView)?.editor;
     if (!editor) return;
     if (line && line > 0) {
       const target = Math.min(Math.max(0, line - 1), editor.lineCount() - 1);
@@ -47913,7 +48146,7 @@ var TutorView = class extends import_obsidian4.ItemView {
     const docNorm = norm(doc);
     const idx = docNorm.indexOf(needle);
     if (idx < 0) {
-      new import_obsidian4.Notice("\u672A\u80FD\u5728\u6587\u4EF6\u4E2D\u627E\u5230\u951A\u70B9\u6587\u672C");
+      new import_obsidian5.Notice("\u672A\u80FD\u5728\u6587\u4EF6\u4E2D\u627E\u5230\u951A\u70B9\u6587\u672C");
       return;
     }
     let rawPos = 0;
@@ -47937,7 +48170,7 @@ var TutorView = class extends import_obsidian4.ItemView {
       if (found < 0) found = doc.search(needle.slice(0, 30));
     }
     if (found < 0) {
-      new import_obsidian4.Notice("\u672A\u80FD\u5728\u6587\u4EF6\u4E2D\u627E\u5230\u951A\u70B9\u6587\u672C");
+      new import_obsidian5.Notice("\u672A\u80FD\u5728\u6587\u4EF6\u4E2D\u627E\u5230\u951A\u70B9\u6587\u672C");
       return;
     }
     const lineNo = editor.offsetToPos(found).line;
@@ -48026,7 +48259,7 @@ var TutorView = class extends import_obsidian4.ItemView {
     this.inputEl.value = "";
     await this.clearDraft();
     const activeFile = this.app.workspace.getActiveFile();
-    const markdownLeaves = this.app.workspace.getLeavesOfType("markdown").map((leaf) => leaf.view).filter((v) => v instanceof import_obsidian4.MarkdownView && !!v.file);
+    const markdownLeaves = this.app.workspace.getLeavesOfType("markdown").map((leaf) => leaf.view).filter((v) => v instanceof import_obsidian5.MarkdownView && !!v.file);
     const editorView = (activeFile && markdownLeaves.find((c) => c.file?.path === activeFile.path)) ?? markdownLeaves[0];
     const fileThread = editorView?.file ? this.conv.reading.threads.find((t2) => !!t2.nodeFile && t2.nodeFile === editorView.file.path) ?? null : null;
     const active = activeThread(this.conv);
@@ -48132,7 +48365,7 @@ ${branchInstr}` : "";
           const div = document.createElement("div");
           div.className = "edge-tutor-md";
           commitContainer.appendChild(div);
-          void import_obsidian4.MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => {
+          void import_obsidian5.MarkdownRenderer.render(this.app, normalizeMath(p), div, this.plugin.settings.textbookRoot, this).then(() => {
             this.attachCitationButtons(div);
             this.attachCodeCopyButtons(div);
           });
@@ -48146,7 +48379,7 @@ ${branchInstr}` : "";
         const div = document.createElement("div");
         div.className = "edge-tutor-md";
         commitContainer.appendChild(div);
-        void import_obsidian4.MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => {
+        void import_obsidian5.MarkdownRenderer.render(this.app, normalizeMath(pending), div, this.plugin.settings.textbookRoot, this).then(() => {
           this.attachCitationButtons(div);
           this.attachCodeCopyButtons(div);
         });
@@ -48278,7 +48511,7 @@ ${branchInstr}` : "";
    */
   async regenerate(target) {
     if (this.busy) {
-      new import_obsidian4.Notice("\u6709\u56DE\u7B54\u751F\u6210\u4E2D\uFF0C\u8BF7\u7A0D\u5019");
+      new import_obsidian5.Notice("\u6709\u56DE\u7B54\u751F\u6210\u4E2D\uFF0C\u8BF7\u7A0D\u5019");
       return;
     }
     const tIdx = this.conv.messages.indexOf(target);
@@ -48291,7 +48524,7 @@ ${branchInstr}` : "";
       }
     }
     if (uIdx < 0) {
-      new import_obsidian4.Notice("\u627E\u4E0D\u5230\u5BF9\u5E94\u7684\u63D0\u95EE");
+      new import_obsidian5.Notice("\u627E\u4E0D\u5230\u5BF9\u5E94\u7684\u63D0\u95EE");
       return;
     }
     const userMsg = this.conv.messages[uIdx];
@@ -48357,7 +48590,7 @@ ${branchInstr}` : "";
         this.setStatus("\u26A0\uFE0F \u56DE\u7B54\u4E2D\u65AD\uFF0C\u53EF\u518D\u6B21\u91CD\u65B0\u751F\u6210");
       } else {
         this.renderAll();
-        new import_obsidian4.Notice("\u91CD\u65B0\u751F\u6210\u5931\u8D25\uFF1A" + e.message.slice(0, 100));
+        new import_obsidian5.Notice("\u91CD\u65B0\u751F\u6210\u5931\u8D25\uFF1A" + e.message.slice(0, 100));
       }
     } finally {
       this.busy = false;
@@ -48485,9 +48718,9 @@ ${answer}`;
     }
     const existingTitles = /* @__PURE__ */ new Set();
     const dir = this.app.vault.getAbstractFileByPath(this.plugin.workspaceFolder(this.currentWorkspace));
-    if (dir instanceof import_obsidian4.TFolder) {
+    if (dir instanceof import_obsidian5.TFolder) {
       for (const child of dir.children) {
-        if (!(child instanceof import_obsidian4.TFile) || !child.name.endsWith(".md")) continue;
+        if (!(child instanceof import_obsidian5.TFile) || !child.name.endsWith(".md")) continue;
         if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
         existingTitles.add(child.basename);
       }
@@ -48517,11 +48750,11 @@ ${answer}`;
   async saveConversation() {
     const active = activeThread(this.conv);
     if (!active) {
-      new import_obsidian4.Notice("\u6CA1\u6709\u6D3B\u8DC3\u7EBF\u7A0B\u53EF\u6C89\u6DC0");
+      new import_obsidian5.Notice("\u6CA1\u6709\u6D3B\u8DC3\u7EBF\u7A0B\u53EF\u6C89\u6DC0");
       return;
     }
     await this.sedimentThread(active.id);
-    new import_obsidian4.Notice("\u2705 \u8BA4\u77E5\u8282\u70B9\u5DF2\u6C89\u6DC0");
+    new import_obsidian5.Notice("\u2705 \u8BA4\u77E5\u8282\u70B9\u5DF2\u6C89\u6DC0");
   }
   /** 沉淀全部线程（清屏前兜底）：根在前，保证 parentTitle 解析时父文件已存在 */
   async sedimentAllThreads() {
@@ -48535,7 +48768,7 @@ ${answer}`;
   async confirmClear() {
     const hasContent = this.conv.messages.length > 0 || this.conv.reading.threads.length > 0;
     if (!hasContent) {
-      new import_obsidian4.Notice("\u5F53\u524D\u5BF9\u8BDD\u5DF2\u7ECF\u662F\u7A7A\u7684");
+      new import_obsidian5.Notice("\u5F53\u524D\u5BF9\u8BDD\u5DF2\u7ECF\u662F\u7A7A\u7684");
       return;
     }
     const hasUnsaved = await this.hasUnsavedConversation();
@@ -48548,7 +48781,7 @@ ${answer}`;
       const n = await this.sedimentAllThreads();
       await this.plugin.exportWorkspace("json");
       await this.doClear();
-      new import_obsidian4.Notice(`\u5DF2\u6C89\u6DC0 ${n} \u4E2A\u7EBF\u7A0B\u540E\u6E05\u5C4F`);
+      new import_obsidian5.Notice(`\u5DF2\u6C89\u6DC0 ${n} \u4E2A\u7EBF\u7A0B\u540E\u6E05\u5C4F`);
     };
     modal.open();
   }
@@ -48559,9 +48792,9 @@ ${answer}`;
     const folder = this.plugin.workspaceFolder(this.currentWorkspace).replace(/\/+$/, "");
     const dir = this.app.vault.getAbstractFileByPath(folder);
     let latest = 0;
-    if (dir instanceof import_obsidian4.TFolder) {
+    if (dir instanceof import_obsidian5.TFolder) {
       for (const child of dir.children) {
-        if (!(child instanceof import_obsidian4.TFile)) continue;
+        if (!(child instanceof import_obsidian5.TFile)) continue;
         if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
         const mtime = child.stat?.mtime ?? 0;
         if (mtime > latest) latest = mtime;
@@ -48577,13 +48810,13 @@ ${answer}`;
     this.conv.reading.parkingLot = [];
     await this.plugin.saveConv(this.conv);
     this.renderAll();
-    new import_obsidian4.Notice("\u5DF2\u6E05\u7A7A\u5F53\u524D\u5BF9\u8BDD\uFF08\u8282\u70B9\u6587\u4EF6\u672A\u53D7\u5F71\u54CD\uFF0C\u5DF2\u81EA\u52A8\u5907\u4EFD\uFF09");
+    new import_obsidian5.Notice("\u5DF2\u6E05\u7A7A\u5F53\u524D\u5BF9\u8BDD\uFF08\u8282\u70B9\u6587\u4EF6\u672A\u53D7\u5F71\u54CD\uFF0C\u5DF2\u81EA\u52A8\u5907\u4EFD\uFF09");
   }
   /** 暂存问题到停车场 */
   async parkInput() {
     const text = this.inputEl.value.trim();
     if (!text) {
-      new import_obsidian4.Notice("\u8F93\u5165\u6846\u4E3A\u7A7A\uFF0C\u6CA1\u6709\u53EF\u6682\u5B58\u7684\u95EE\u9898");
+      new import_obsidian5.Notice("\u8F93\u5165\u6846\u4E3A\u7A7A\uFF0C\u6CA1\u6709\u53EF\u6682\u5B58\u7684\u95EE\u9898");
       return;
     }
     const anchor = this.plugin.getAnchor();
@@ -48594,7 +48827,7 @@ ${answer}`;
     await this.plugin.saveConv(this.conv);
     this.inputEl.value = "";
     await this.clearDraft();
-    new import_obsidian4.Notice("\u{1F4CC} \u5DF2\u6682\u5B58\u5230\u95EE\u9898\u505C\u8F66\u573A");
+    new import_obsidian5.Notice("\u{1F4CC} \u5DF2\u6682\u5B58\u5230\u95EE\u9898\u505C\u8F66\u573A");
     this.parkContainer.style.display = "block";
     await this.renderParkingLot();
   }
@@ -48730,7 +48963,7 @@ ${answer}`;
   async activateWorkspace(target) {
     if (target === this.currentWorkspace) return;
     if (this.busy) {
-      new import_obsidian4.Notice("\u56DE\u7B54\u751F\u6210\u4E2D\uFF0C\u6682\u4E0D\u80FD\u5207\u6362\u5DE5\u4F5C\u533A");
+      new import_obsidian5.Notice("\u56DE\u7B54\u751F\u6210\u4E2D\uFF0C\u6682\u4E0D\u80FD\u5207\u6362\u5DE5\u4F5C\u533A");
       await this.refreshWorkspaceSelect();
       return;
     }
@@ -48748,7 +48981,7 @@ ${answer}`;
       this.setStatus("\u5DF2\u5207\u6362\u5230\u5DE5\u4F5C\u533A\uFF1A" + (target === "main" ? "\u9ED8\u8BA4" : target));
       await this.refreshWorkspaceSelect();
     } catch (e) {
-      new import_obsidian4.Notice("\u5207\u6362\u5DE5\u4F5C\u533A\u5931\u8D25\uFF1A" + e.message.slice(0, 80));
+      new import_obsidian5.Notice("\u5207\u6362\u5DE5\u4F5C\u533A\u5931\u8D25\uFF1A" + e.message.slice(0, 80));
       await this.refreshWorkspaceSelect();
     }
   }
@@ -49086,7 +49319,7 @@ ${answer}`;
           ].join("\n"));
           modal.onConfirm = async () => {
             const n = await this.plugin.deleteThreadsWithFiles(srcWs, srcIds);
-            new import_obsidian4.Notice(`\u5DF2\u4ECE\u300C${srcWs}\u300D\u5220\u9664 ${n} \u4E2A\u6E90\u8282\u70B9`);
+            new import_obsidian5.Notice(`\u5DF2\u4ECE\u300C${srcWs}\u300D\u5220\u9664 ${n} \u4E2A\u6E90\u8282\u70B9`);
           };
           modal.open();
         }
@@ -49245,7 +49478,7 @@ ${answer}`;
     selBtn.addEventListener("click", async () => {
       const txt = selBtn.getAttribute("data-sel") || "";
       if (!txt) return;
-      const anchorPath = this.isSelectionInPanel() ? this.resolveSelectionAnchor() : this.app.workspace.getActiveViewOfType(import_obsidian4.MarkdownView)?.file?.path ?? null;
+      const anchorPath = this.isSelectionInPanel() ? this.resolveSelectionAnchor() : this.app.workspace.getActiveViewOfType(import_obsidian5.MarkdownView)?.file?.path ?? null;
       document.getSelection()?.removeAllRanges();
       selBtn.style.display = "none";
       this.receiveSelection(txt, anchorPath ?? void 0);
@@ -49401,42 +49634,23 @@ ${answer}`;
     if (opts.guideEntries && opts.guideEntries.length > 0) {
       content.createEl("p", { text: opts.content });
       for (const e of opts.guideEntries) {
-        const box = content.createEl("div", { cls: "edge-tutor-entry" });
-        const heading = box.createEl("h5");
-        const badge = heading.createSpan({
-          text: e.type === "deepen" ? "\u{1F53B} \u6DF1\u5316" : "\u{1F195} \u65B0\u57DF",
-          cls: "edge-tutor-entry-badge" + (e.type === "deepen" ? " deepen" : "")
-        });
-        heading.createSpan({ text: `${e.id} ${e.title}` });
-        if (e.jiang) heading.createSpan({ text: ` \xB7 ${e.jiang}`, cls: "edge-tutor-entry-meta" });
-        const rows = [];
-        if (e.type === "deepen" && e.anchorNode) rows.push(["\u951A\u5B9A\u8282\u70B9", `[[${e.anchorNode}]]`]);
-        if (e.question) rows.push(["\u4E0B\u4E00\u5835\u5899", e.question]);
-        if (e.direction) rows.push(["\u5EF6\u4F38\u65B9\u5411", e.direction]);
-        if (e.whyWorthExploring) rows.push(["\u4E3A\u4EC0\u4E48\u503C\u5F97\u8FFD", e.whyWorthExploring]);
-        if (e.entryPoint) rows.push(["\u81EA\u7136\u5207\u5165\u53E3", e.entryPoint]);
-        if (e.tensions.length) rows.push(["\u5173\u952E\u5F20\u529B", e.tensions.join("\uFF1B")]);
-        if (e.connections.length) rows.push(["\u53EF\u8FDE\u63A5", e.connections.join("\uFF1B")]);
-        if (e.possibleTrails.length) rows.push(["\u53EF\u80FD\u5C3E\u8FF9", e.possibleTrails.join("\uFF1B")]);
-        if (e.anchor) rows.push(["\u6559\u6750\u951A\u70B9", e.anchor]);
-        for (const [k3, v] of rows) {
-          const line = box.createEl("p", { cls: "edge-tutor-entry-row" });
-          line.createEl("strong", { text: `${k3}\uFF1A` });
-          line.createSpan({ text: v });
-        }
-        const start = box.createEl("button", { text: "\u4ECE\u8FD9\u91CC\u5F00\u59CB\u63A2\u7D22", cls: "edge-tutor-entry-start" });
-        start.addEventListener("click", () => {
-          if (this.busy) return;
-          this.pendingGuide = e;
-          this.branchNext = false;
-          this.branchOrigin = "";
-          this.branchFromSelection = false;
-          this.pendingAnchor = null;
-          this.updateChips();
-          this.inputEl.value = e.question || e.title;
-          this.inputEl.placeholder = "\u53EF\u4EE5\u6539\u5199\u8FD9\u4E2A\u95EE\u9898\uFF0C\u7136\u540E\u53D1\u9001\u2026";
-          this.inputEl.focus();
-        });
+        content.appendChild(
+          buildGuideEntryBox(e, {
+            isBusy: () => this.busy,
+            onStart: (entry) => {
+              const g = entry;
+              this.pendingGuide = g;
+              this.branchNext = false;
+              this.branchOrigin = "";
+              this.branchFromSelection = false;
+              this.pendingAnchor = null;
+              this.updateChips();
+              this.inputEl.value = g.question || g.title;
+              this.inputEl.placeholder = "\u53EF\u4EE5\u6539\u5199\u8FD9\u4E2A\u95EE\u9898\uFF0C\u7136\u540E\u53D1\u9001\u2026";
+              this.inputEl.focus();
+            }
+          })
+        );
       }
     } else if (opts.anchor) {
       const src = opts.anchor;
@@ -49447,7 +49661,7 @@ ${answer}`;
         bq.addEventListener("click", () => void this.navigateToTextAnchor(src, quote));
       }
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
-      void import_obsidian4.MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
+      void import_obsidian5.MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
         this.attachCitationButtons(mdEl);
         this.attachCodeCopyButtons(mdEl);
       });
@@ -49457,46 +49671,48 @@ ${answer}`;
       }
     } else {
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
-      void import_obsidian4.MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
+      void import_obsidian5.MarkdownRenderer.render(this.app, normalizeMath(opts.content), mdEl, this.plugin.settings.textbookRoot, this).then(() => {
         this.attachCitationButtons(mdEl);
         this.attachCodeCopyButtons(mdEl);
       });
     }
     if (opts.onEdit || opts.onRegenerate || opts.onDelete) {
-      const acts = el2.createEl("div", { cls: "edge-tutor-msg-acts" });
-      const actBtn = (label, tip, handler, danger = false) => {
-        const b = acts.createEl("button", {
-          text: label,
-          cls: "edge-tutor-msg-act" + (danger ? " danger" : ""),
-          attr: { title: tip }
-        });
-        b.addEventListener("click", (e) => {
-          e.stopPropagation();
-          void handler();
-        });
-        return b;
-      };
-      actBtn("\u{1F4CB} \u590D\u5236", "\u590D\u5236\u8FD9\u6761\u6D88\u606F\u5185\u5BB9", async () => {
-        try {
-          await navigator.clipboard.writeText(opts.content);
-          new import_obsidian4.Notice("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
-        } catch (e) {
-          console.error("\u590D\u5236\u6D88\u606F\u5931\u8D25", e);
-          new import_obsidian4.Notice("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u590D\u5236");
+      const buttons = [
+        {
+          label: "\u{1F4CB} \u590D\u5236",
+          tip: "\u590D\u5236\u8FD9\u6761\u6D88\u606F\u5185\u5BB9",
+          handler: async () => {
+            try {
+              await navigator.clipboard.writeText(opts.content);
+              new import_obsidian5.Notice("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+            } catch (e) {
+              console.error("\u590D\u5236\u6D88\u606F\u5931\u8D25", e);
+              new import_obsidian5.Notice("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u9009\u62E9\u590D\u5236");
+            }
+          }
         }
-      });
+      ];
       if (opts.onEdit) {
-        actBtn("\u270F\uFE0F \u7F16\u8F91", "\u7F16\u8F91\u8FD9\u6761\u6D88\u606F", () => {
-          content.empty();
-          opts.onEdit(content, opts.content);
+        buttons.push({
+          label: "\u270F\uFE0F \u7F16\u8F91",
+          tip: "\u7F16\u8F91\u8FD9\u6761\u6D88\u606F",
+          handler: () => {
+            content.empty();
+            opts.onEdit(content, opts.content);
+          }
         });
       }
       if (opts.onRegenerate) {
-        actBtn("\u{1F504} \u91CD\u65B0\u751F\u6210", "\u91CD\u65B0\u751F\u6210\u8FD9\u6761\u56DE\u7B54\uFF08\u7F51\u7EDC\u6CE2\u52A8/\u56DE\u7B54\u4E0D\u4F73\u65F6\u4F7F\u7528\uFF09", () => opts.onRegenerate());
+        buttons.push({
+          label: "\u{1F504} \u91CD\u65B0\u751F\u6210",
+          tip: "\u91CD\u65B0\u751F\u6210\u8FD9\u6761\u56DE\u7B54\uFF08\u7F51\u7EDC\u6CE2\u52A8/\u56DE\u7B54\u4E0D\u4F73\u65F6\u4F7F\u7528\uFF09",
+          handler: () => opts.onRegenerate()
+        });
       }
       if (opts.onDelete) {
-        actBtn("\u{1F5D1}\uFE0F \u5220\u9664", "\u5220\u9664\u8FD9\u6761\u6D88\u606F", () => opts.onDelete(), true);
+        buttons.push({ label: "\u{1F5D1}\uFE0F \u5220\u9664", tip: "\u5220\u9664\u8FD9\u6761\u6D88\u606F", handler: () => opts.onDelete(), danger: true });
       }
+      buildMsgActBar(el2, buttons);
     }
     this.scrollToBottom();
     return el2;
@@ -49513,7 +49729,7 @@ ${answer}`;
   attachCodeCopyButtons(container) {
     attachCodeCopyButtonsDOM(
       container,
-      (msg) => new import_obsidian4.Notice(msg),
+      (msg) => new import_obsidian5.Notice(msg),
       (e) => console.error("\u590D\u5236\u4EE3\u7801\u5931\u8D25", e)
     );
   }
@@ -49556,198 +49772,14 @@ function dropTargetAt(canvas, clientX, clientY) {
   }
   return null;
 }
-function normalizeMath(text) {
-  let out = text;
-  out = out.replace(/\\\[[\s\S]*?\\\]/g, (m) => "$$" + m.slice(2, -2).trim() + "$$");
-  out = out.replace(/\\\(([^\\]*?)\\\)/g, (m) => "$" + m.slice(2, -2).trim() + "$");
-  out = out.replace(/\\\(/g, "$").replace(/\\\)/g, "$");
-  out = out.replace(/\\\[/g, "$$").replace(/\\\]/g, "$$");
-  return out;
-}
-var PromptModal = class extends import_obsidian4.Modal {
-  constructor(app, title, placeholder = "", initial = "") {
-    super(app);
-    this.placeholder = placeholder;
-    this.initial = initial;
-    this.titleEl.setText(title);
-  }
-  openPrompt() {
-    return new Promise((resolve) => {
-      this.resolve = resolve;
-      this.open();
-    });
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    const input = contentEl.createEl("input", {
-      type: "text",
-      attr: { placeholder: this.placeholder, value: this.initial }
-    });
-    input.addClass("edge-tutor-prompt-input");
-    input.focus();
-    input.select();
-    const submit = () => {
-      const v = input.value.trim();
-      this.resolve(v || null);
-      this.close();
-    };
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submit();
-      if (e.key === "Escape") {
-        this.resolve(null);
-        this.close();
-      }
-    });
-    const btnRow = contentEl.createEl("div", { cls: "edge-tutor-prompt-btns" });
-    const okBtn = btnRow.createEl("button", { text: "\u786E\u5B9A", cls: "mod-cta" });
-    okBtn.addEventListener("click", submit);
-    const cancelBtn = btnRow.createEl("button", { text: "\u53D6\u6D88" });
-    cancelBtn.addEventListener("click", () => {
-      this.resolve(null);
-      this.close();
-    });
-  }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-};
-var ConfirmModal = class extends import_obsidian4.Modal {
-  constructor(app, title, text, confirmText = "\u786E\u8BA4\u6E05\u7A7A") {
-    super(app);
-    this.onConfirm = () => {
-    };
-    this.text = text;
-    this.confirmText = confirmText;
-    this.titleEl.setText(title);
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("div", { text: this.text, cls: "edge-tutor-scope-desc" });
-    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
-    const ok = row.createEl("button", { text: this.confirmText, cls: "edge-tutor-mini mod-cta" });
-    ok.addEventListener("click", () => {
-      this.onConfirm();
-      this.close();
-    });
-    const cancel = row.createEl("button", { text: "\u53D6\u6D88", cls: "edge-tutor-mini" });
-    cancel.addEventListener("click", () => this.close());
-  }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-};
-var ClearModal = class extends import_obsidian4.Modal {
-  constructor(app, hasUnsaved) {
-    super(app);
-    this.onBackupAndClear = () => {
-    };
-    this.onSaveAndClear = () => {
-    };
-    this.hasUnsaved = hasUnsaved;
-    this.titleEl.setText("\u6E05\u7A7A\u5F53\u524D\u5BF9\u8BDD\uFF1F");
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("div", {
-      text: [
-        "\u5C06\u5220\u9664\u5F53\u524D\u5DE5\u4F5C\u533A\u7684\u5168\u90E8\u5BF9\u8BDD\u8BB0\u5F55\u548C\u601D\u7EF4\u5BFC\u56FE\u7ED3\u6784\uFF08.conv.json\uFF09\u3002",
-        "\u5DF2\u6C89\u6DC0\u7684\u8282\u70B9\u7B14\u8BB0\uFF08.md \u6587\u4EF6\uFF09\u4E0D\u53D7\u5F71\u54CD\u3002",
-        this.hasUnsaved ? "\u26A0\uFE0F \u68C0\u6D4B\u5230\u6700\u8FD1\u7684\u5BF9\u8BDD\u8FD8\u6CA1\u6709\u6C89\u6DC0\u4E3A\u8282\u70B9\u3002" : "",
-        "\u65E0\u8BBA\u54EA\u79CD\u65B9\u5F0F\uFF0C\u6E05\u7A7A\u524D\u90FD\u4F1A\u81EA\u52A8\u5BFC\u51FA JSON \u5907\u4EFD\u5230 _exports/\uFF0C\u53EF\u968F\u65F6\u6062\u590D\u3002"
-      ].filter(Boolean).join("\n"),
-      cls: "edge-tutor-scope-desc"
-    });
-    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
-    if (this.hasUnsaved) {
-      const save = row.createEl("button", { text: "\u{1F4BE} \u5148\u6C89\u6DC0\u518D\u6E05\u5C4F", cls: "edge-tutor-mini mod-cta" });
-      save.addEventListener("click", () => {
-        this.onSaveAndClear();
-        this.close();
-      });
-    }
-    const backup = row.createEl("button", { text: "\u5907\u4EFD\u5E76\u6E05\u5C4F", cls: "edge-tutor-mini" });
-    backup.addEventListener("click", () => {
-      this.onBackupAndClear();
-      this.close();
-    });
-    const cancel = row.createEl("button", { text: "\u53D6\u6D88", cls: "edge-tutor-mini" });
-    cancel.addEventListener("click", () => this.close());
-  }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-};
-var ScopeModal = class extends import_obsidian4.Modal {
-  constructor() {
-    super(...arguments);
-    /** 模式选择（null=未选，提交时默认混合） */
-    this.pendingMode = null;
-  }
-  openScope() {
-    return new Promise((resolve) => {
-      this.resolve = resolve;
-      this.open();
-    });
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    this.scope.register([], "Escape", () => this.closeResolve(null));
-    contentEl.createEl("h3", { text: "\u65B9\u5411\u6307\u5F15\u8BBE\u7F6E" });
-    contentEl.createEl("div", {
-      text: "\u5148\u9009\u6A21\u5F0F\uFF08\u70B9\u51FB\u9AD8\u4EAE\uFF09\uFF0C\u518D\u9009\u8303\u56F4\u786E\u5B9A\u3002\u4E0D\u9009\u6A21\u5F0F\u5219\u9ED8\u8BA4\u6DF7\u5408\u3002",
-      cls: "edge-tutor-scope-desc"
-    });
-    contentEl.createEl("h4", { text: "\u6A21\u5F0F" });
-    const modeRow = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
-    const mkModeBtn = (text, value) => {
-      const b = modeRow.createEl("button", { text, cls: "edge-tutor-mini" });
-      b.addEventListener("click", () => {
-        this.pendingMode = value;
-        modeRow.querySelectorAll("button").forEach((x) => x.removeClass("mod-cta"));
-        b.addClass("mod-cta");
-      });
-      return b;
-    };
-    mkModeBtn("\u6DF7\u5408\uFF08\u6DF1\u5316+\u65B0\u57DF\uFF09", "mixed");
-    mkModeBtn("\u{1F53B} \u6DF1\u5316\u5F53\u524D\u94FE", "deepen");
-    mkModeBtn("\u{1F195} \u5168\u4E66\u65B0\u57DF", "frontier");
-    contentEl.createEl("h4", { text: "\u8303\u56F4" });
-    const row = contentEl.createEl("div", { cls: "edge-tutor-scope-btns" });
-    const whole = row.createEl("button", { text: "\u{1F4D6} \u5168\u4E66\u8303\u56F4", cls: "edge-tutor-mini mod-cta" });
-    whole.addEventListener("click", () => this.pick("whole"));
-    const nearby = row.createEl("button", { text: "\u{1F4CD} \u5F53\u524D\u4F4D\u7F6E\u9644\u8FD1", cls: "edge-tutor-mini" });
-    nearby.addEventListener("click", () => this.pick("nearby"));
-    const cancel = row.createEl("button", { text: "\u53D6\u6D88", cls: "edge-tutor-mini" });
-    cancel.addEventListener("click", () => this.closeResolve(null));
-  }
-  pick(scope) {
-    this.resolve({ scope, mode: this.pendingMode ?? "mixed" });
-    this.close();
-  }
-  closeResolve(v) {
-    this.resolve(v);
-    this.close();
-  }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-};
 
 // src/agentview.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 var VIEW_TYPE_AGENT = "edge-tutor-agent-view";
 function freshAgentConv() {
   return { workspace: "main", tasks: [] };
 }
-var AgentView = class extends import_obsidian5.ItemView {
+var AgentView = class extends import_obsidian6.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.conv = freshAgentConv();
@@ -49802,7 +49834,7 @@ var AgentView = class extends import_obsidian5.ItemView {
       this.conv.tasks = [];
       void this.plugin.saveAgentConv(this.conv);
       this.renderAll();
-      new import_obsidian5.Notice("\u5DF2\u6E05\u7A7A\u6267\u884C\u8BB0\u5F55");
+      new import_obsidian6.Notice("\u5DF2\u6E05\u7A7A\u6267\u884C\u8BB0\u5F55");
     });
     this.statusBar = container.createEl("div", { cls: "edge-tutor-status" });
     const ws3 = this.plugin.currentWorkspace();
@@ -49873,7 +49905,7 @@ var AgentView = class extends import_obsidian5.ItemView {
       content.createEl("div", { text: `\u26A0\uFE0F ${task.error}`, cls: "edge-tutor-agent-task-error" });
     } else if (task.answer) {
       const mdEl = content.createEl("div", { cls: "edge-tutor-md" });
-      void import_obsidian5.MarkdownRenderer.render(this.app, task.answer, mdEl, "", this);
+      void import_obsidian6.MarkdownRenderer.render(this.app, task.answer, mdEl, "", this);
     }
     this.scrollToBottom();
   }
@@ -49965,7 +49997,7 @@ var AgentView = class extends import_obsidian5.ItemView {
 // src/main.ts
 var RERANK_TRIGGER_SCORE = 0.35;
 var CUSTOM_ROOT = "__custom__";
-var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
+var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian7.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -50021,11 +50053,11 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       callback: async () => {
         const rebuilt = await this.rebuildConvFromNodes();
         if (rebuilt) {
-          new import_obsidian6.Notice(`\u5DF2\u4ECE ${rebuilt.reading.threads.length} \u4E2A\u8282\u70B9\u91CD\u5EFA\u4F1A\u8BDD`);
+          new import_obsidian7.Notice(`\u5DF2\u4ECE ${rebuilt.reading.threads.length} \u4E2A\u8282\u70B9\u91CD\u5EFA\u4F1A\u8BDD`);
           const view = this.getTutorView();
           if (view) await view.reloadFromConv(rebuilt);
         } else {
-          new import_obsidian6.Notice("\u5F53\u524D\u5DE5\u4F5C\u533A\u6CA1\u6709\u8282\u70B9\u6587\u4EF6\u53EF\u91CD\u5EFA");
+          new import_obsidian7.Notice("\u5F53\u524D\u5DE5\u4F5C\u533A\u6CA1\u6709\u8282\u70B9\u6587\u4EF6\u53EF\u91CD\u5EFA");
         }
       }
     });
@@ -50033,7 +50065,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       id: "ask-from-selection",
       name: "\u7531\u6B64\u8FFD\u95EE\uFF08\u9009\u4E2D\u6559\u6750\u6587\u672C \u2192 \u9762\u677F\uFF09",
       checkCallback: (checking) => {
-        const view = this.app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
+        const view = this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
         const selection = view?.editor?.getSelection?.() ?? "";
         if (!selection) return false;
         if (!checking) this.askFromSelection(selection, view?.file?.path);
@@ -50077,7 +50109,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
         if (selection) {
           menu.addItem((item) => {
             item.setTitle("\u{1F50D} \u7531\u6B64\u8FFD\u95EE\uFF08\u8BA4\u77E5\u8FB9\u7F18\u5BFC\u5E08\uFF09").setIcon("help").onClick(async () => {
-              const view = this.app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
+              const view = this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
               await this.askFromSelection(selection, view?.file?.path);
             });
           });
@@ -50151,7 +50183,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       const view = this.getTutorView();
       if (view && view.currentWorkspace !== wsName) await view.activateWorkspace(wsName);
     }
-    new import_obsidian6.Notice(`\u{1F4DA} \u6559\u6750\u5DF2\u5207\u6362\uFF1A${normalized}`);
+    new import_obsidian7.Notice(`\u{1F4DA} \u6559\u6750\u5DF2\u5207\u6362\uFF1A${normalized}`);
   }
   /** 教材 root → 教材工作区名（books.yaml 的 name 字段；自定义路径不在注册表 → null 不联动） */
   workspaceNameForTextbook(root) {
@@ -50176,7 +50208,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       for (const ws3 of workspaces) {
         const path3 = convPath(this.settings.nodeFolder, ws3);
         const f = this.app.vault.getAbstractFileByPath(path3);
-        if (!(f instanceof import_obsidian6.TFile)) continue;
+        if (!(f instanceof import_obsidian7.TFile)) continue;
         const parsed = parseConv(await this.app.vault.cachedRead(f));
         if (!parsed) continue;
         const legacy = parsed.reading?.threads;
@@ -50202,7 +50234,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
         }
       }
       if (migratedAny) {
-        new import_obsidian6.Notice("\u5DF2\u4ECE\u65E7\u7248\u4F1A\u8BDD\u8FC1\u79FB\u8BA4\u77E5\u7EBF\u7A0B\u5230\u8282\u70B9\u6587\u4EF6");
+        new import_obsidian7.Notice("\u5DF2\u4ECE\u65E7\u7248\u4F1A\u8BDD\u8FC1\u79FB\u8BA4\u77E5\u7EBF\u7A0B\u5230\u8282\u70B9\u6587\u4EF6");
       }
       this.settings.migrated = true;
       await this.saveSettings();
@@ -50219,7 +50251,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     }
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) {
-      new import_obsidian6.Notice("\u65E0\u6CD5\u6253\u5F00\u53F3\u4FA7\u9762\u677F");
+      new import_obsidian7.Notice("\u65E0\u6CD5\u6253\u5F00\u53F3\u4FA7\u9762\u677F");
       return;
     }
     await leaf.setViewState({ type: VIEW_TYPE_TUTOR, active: true });
@@ -50239,7 +50271,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     }
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) {
-      new import_obsidian6.Notice("\u65E0\u6CD5\u6253\u5F00\u6267\u884C\u9762\u677F");
+      new import_obsidian7.Notice("\u65E0\u6CD5\u6253\u5F00\u6267\u884C\u9762\u677F");
       return;
     }
     await leaf.setViewState({ type: VIEW_TYPE_AGENT, active: true });
@@ -50250,7 +50282,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     await this.activateView();
     const view = this.getTutorView();
     if (!view) {
-      new import_obsidian6.Notice("\u9762\u677F\u672A\u5C31\u7EEA\uFF0C\u8BF7\u91CD\u8BD5");
+      new import_obsidian7.Notice("\u9762\u677F\u672A\u5C31\u7EEA\uFF0C\u8BF7\u91CD\u8BD5");
       return;
     }
     view.receiveSelection(selection, sourcePath);
@@ -50262,7 +50294,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
   }
   /** 获取当前编辑文件的锚点 */
   getAnchor() {
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
     if (!view?.file) return null;
     return {
       sourcePath: view.file.path,
@@ -50274,7 +50306,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const root = this.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
     const activeFile = this.app.workspace.getActiveFile();
     const leaves = this.app.workspace.getLeavesOfType("markdown");
-    const candidates = leaves.map((leaf) => leaf.view).filter((view2) => view2 instanceof import_obsidian6.MarkdownView && !!view2.file).filter((view2) => {
+    const candidates = leaves.map((leaf) => leaf.view).filter((view2) => view2 instanceof import_obsidian7.MarkdownView && !!view2.file).filter((view2) => {
       const path3 = view2.file.path.replace(/\\/g, "/");
       return path3 === root || path3.startsWith(root + "/");
     });
@@ -50310,17 +50342,17 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
   async discoverWorkspaces() {
     const root = this.app.vault.getAbstractFileByPath(this.settings.nodeFolder);
     const ws3 = [];
-    if (!(root instanceof import_obsidian6.TFolder)) return ws3;
+    if (!(root instanceof import_obsidian7.TFolder)) return ws3;
     const rootHasNodes = root.children.some(
-      (c) => c instanceof import_obsidian6.TFile && c.name.endsWith(".md") && !c.name.startsWith(".") && c.name !== "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md"
+      (c) => c instanceof import_obsidian7.TFile && c.name.endsWith(".md") && !c.name.startsWith(".") && c.name !== "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md"
     );
     if (rootHasNodes) ws3.push("main");
     for (const child of root.children) {
-      if (!(child instanceof import_obsidian6.TFolder)) continue;
+      if (!(child instanceof import_obsidian7.TFolder)) continue;
       if (_EdgeTutorPlugin.SPECIAL_FOLDERS.has(child.name)) continue;
-      const subFolders = child.children.filter((c) => c instanceof import_obsidian6.TFolder);
+      const subFolders = child.children.filter((c) => c instanceof import_obsidian7.TFolder);
       const directNodes = child.children.some(
-        (c) => c instanceof import_obsidian6.TFile && c.name.endsWith(".md") && !c.name.startsWith(".") && c.name !== "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md"
+        (c) => c instanceof import_obsidian7.TFile && c.name.endsWith(".md") && !c.name.startsWith(".") && c.name !== "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md"
       );
       if (subFolders.length > 0 || directNodes) {
         ws3.push(child.name);
@@ -50340,7 +50372,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
   textbookRootAbs() {
     const root = this.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
     const adapter = this.app.vault.adapter;
-    if (adapter instanceof import_obsidian6.FileSystemAdapter) {
+    if (adapter instanceof import_obsidian7.FileSystemAdapter) {
       return (adapter.getBasePath() + "/" + root).replace(/\\/g, "/");
     }
     return root;
@@ -50353,13 +50385,13 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     ];
     for (const tocPath of tocCandidates) {
       const f = this.app.vault.getAbstractFileByPath(tocPath);
-      if (f instanceof import_obsidian6.TFile) {
+      if (f instanceof import_obsidian7.TFile) {
         return await this.app.vault.cachedRead(f);
       }
     }
     const root = this.app.vault.getAbstractFileByPath(this.settings.textbookRoot);
-    if (root instanceof import_obsidian6.TFolder) {
-      return root.children.filter((c) => c instanceof import_obsidian6.TFile && c.name.endsWith(".md")).map((c) => `- [[${c.basename}]]`).join("\n");
+    if (root instanceof import_obsidian7.TFolder) {
+      return root.children.filter((c) => c instanceof import_obsidian7.TFile && c.name.endsWith(".md")).map((c) => `- [[${c.basename}]]`).join("\n");
     }
     return "\uFF08\u65E0\u6CD5\u8BFB\u53D6\u6559\u6750\u76EE\u5F55\uFF09";
   }
@@ -50390,13 +50422,13 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       let target = null;
       if (up.startsWith(folder + "/")) {
         const f2 = this.app.vault.getAbstractFileByPath(up);
-        if (f2 instanceof import_obsidian6.TFile) target = f2;
+        if (f2 instanceof import_obsidian7.TFile) target = f2;
       }
       if (!target) {
         const base = up.split("/").pop() ?? "";
         const dir = this.app.vault.getAbstractFileByPath(folder);
-        if (base && dir instanceof import_obsidian6.TFolder) {
-          target = dir.children.find((c) => c instanceof import_obsidian6.TFile && c.name === base) ?? null;
+        if (base && dir instanceof import_obsidian7.TFolder) {
+          target = dir.children.find((c) => c instanceof import_obsidian7.TFile && c.name === base) ?? null;
         }
       }
       if (target) {
@@ -50418,9 +50450,9 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const mocPath = `${folder}/\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md`;
     const folderObj = this.app.vault.getAbstractFileByPath(folder);
     const nodes = [];
-    if (folderObj instanceof import_obsidian6.TFolder) {
+    if (folderObj instanceof import_obsidian7.TFolder) {
       for (const f of folderObj.children) {
-        if (!(f instanceof import_obsidian6.TFile) || !f.name.endsWith(".md")) continue;
+        if (!(f instanceof import_obsidian7.TFile) || !f.name.endsWith(".md")) continue;
         if (f.name.startsWith(".") || f.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
         const content2 = await this.app.vault.cachedRead(f);
         nodes.push(parseNodeFromContent(f.basename, content2, f.path));
@@ -50428,7 +50460,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     }
     const content = buildMocContent(nodes);
     const existing = this.app.vault.getAbstractFileByPath(mocPath);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof import_obsidian7.TFile) {
       await this.app.vault.modify(existing, content);
     } else {
       await this.app.vault.create(mocPath, content);
@@ -50440,11 +50472,11 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const folder = this.workspaceFolderPathOf(ws3);
     const mocPath = `${folder}/\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md`;
     const f = this.app.vault.getAbstractFileByPath(mocPath);
-    if (f instanceof import_obsidian6.TFile) {
+    if (f instanceof import_obsidian7.TFile) {
       const leaf = this.app.workspace.getLeaf(false);
       await leaf.openFile(f);
     } else {
-      new import_obsidian6.Notice("\u8BA4\u77E5\u5730\u56FE\u8FD8\u4E0D\u5B58\u5728 \u2014\u2014 \u5148\u5728\u9762\u677F\u91CC\u6C89\u6DC0\u5BF9\u8BDD");
+      new import_obsidian7.Notice("\u8BA4\u77E5\u5730\u56FE\u8FD8\u4E0D\u5B58\u5728 \u2014\u2014 \u5148\u5728\u9762\u677F\u91CC\u6C89\u6DC0\u5BF9\u8BDD");
     }
   }
   /** 新建工作区（子文件夹；当前在教材下则归入该教材容器，教材根也归入教材） */
@@ -50469,7 +50501,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const oldPath = this.workspaceFolderPathOf(oldName);
     const newPath = this.workspaceFolderPathOf(finalId);
     const oldFolder = this.app.vault.getAbstractFileByPath(oldPath);
-    if (oldFolder instanceof import_obsidian6.TFolder) {
+    if (oldFolder instanceof import_obsidian7.TFolder) {
       try {
         await this.app.vault.rename(oldFolder, newPath);
         try {
@@ -50488,11 +50520,11 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
         }
         return finalId;
       } catch (e) {
-        new import_obsidian6.Notice("\u91CD\u547D\u540D\u5931\u8D25\uFF1A" + e.message.slice(0, 80));
+        new import_obsidian7.Notice("\u91CD\u547D\u540D\u5931\u8D25\uFF1A" + e.message.slice(0, 80));
         return null;
       }
     }
-    new import_obsidian6.Notice("\u91CD\u547D\u540D\u5931\u8D25\uFF1A\u627E\u4E0D\u5230\u5DE5\u4F5C\u533A\u76EE\u5F55");
+    new import_obsidian7.Notice("\u91CD\u547D\u540D\u5931\u8D25\uFF1A\u627E\u4E0D\u5230\u5DE5\u4F5C\u533A\u76EE\u5F55");
     return null;
   }
   /**
@@ -50533,14 +50565,14 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       for (const p of cands) {
         if (!p || p.endsWith("/.md")) continue;
         const hit = this.app.vault.getAbstractFileByPath(p);
-        if (hit instanceof import_obsidian6.TFile) {
+        if (hit instanceof import_obsidian7.TFile) {
           f = hit;
           break;
         }
       }
-      if (!f && dir instanceof import_obsidian6.TFolder) {
+      if (!f && dir instanceof import_obsidian7.TFolder) {
         for (const child of dir.children) {
-          if (!(child instanceof import_obsidian6.TFile) || !child.name.endsWith(".md")) continue;
+          if (!(child instanceof import_obsidian7.TFile) || !child.name.endsWith(".md")) continue;
           if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
           try {
             const content = await this.app.vault.cachedRead(child);
@@ -50553,7 +50585,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
           }
         }
       }
-      if (f instanceof import_obsidian6.TFile) {
+      if (f instanceof import_obsidian7.TFile) {
         try {
           await this.app.vault.trash(f, true);
         } catch (e) {
@@ -50613,7 +50645,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     } catch (e) {
       console.warn("[edge-tutor] saveConv adapter \u5931\u8D25\uFF0C\u9000\u56DE vault API", e);
       const existing = this.app.vault.getAbstractFileByPath(path3);
-      if (existing instanceof import_obsidian6.TFile) {
+      if (existing instanceof import_obsidian7.TFile) {
         await this.app.vault.modify(existing, content);
       } else {
         await this.app.vault.create(path3, content);
@@ -50626,7 +50658,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const conv = await this.loadConv(ws3);
     const hasContent = conv.messages.length > 0 || conv.reading.threads.length > 0;
     if (!hasContent) {
-      new import_obsidian6.Notice("\u5F53\u524D\u5DE5\u4F5C\u533A\u6CA1\u6709\u4F1A\u8BDD\u53EF\u5BFC\u51FA");
+      new import_obsidian7.Notice("\u5F53\u524D\u5DE5\u4F5C\u533A\u6CA1\u6709\u4F1A\u8BDD\u53EF\u5BFC\u51FA");
       return;
     }
     const exportFolder = "learning/peizhi/learn/_wiki/\u8BA4\u77E5\u8FB9\u7F18/_exports";
@@ -50641,12 +50673,12 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
       });
       const path3 = `${exportFolder}/\u8BA4\u77E5\u8FB9\u7F18\u5BFC\u51FA_${safeWs}_${stamp}.md`;
       await this.writeUnique(exportFolder, path3, md2);
-      new import_obsidian6.Notice("\u{1F4E4} Markdown \u7B14\u8BB0\u5DF2\u5BFC\u51FA\uFF1A" + path3);
+      new import_obsidian7.Notice("\u{1F4E4} Markdown \u7B14\u8BB0\u5DF2\u5BFC\u51FA\uFF1A" + path3);
     } else {
       const json = serializeConv(conv);
       const path3 = `${exportFolder}/\u8BA4\u77E5\u8FB9\u7F18\u5907\u4EFD_${safeWs}_${stamp}.json`;
       await this.writeUnique(exportFolder, path3, json);
-      new import_obsidian6.Notice("\u{1F4E6} JSON \u5907\u4EFD\u5DF2\u5BFC\u51FA\uFF1A" + path3);
+      new import_obsidian7.Notice("\u{1F4E6} JSON \u5907\u4EFD\u5DF2\u5BFC\u51FA\uFF1A" + path3);
     }
   }
   /** 导入 JSON 备份（恢复认知节点） */
@@ -50661,7 +50693,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
         const text = await file.text();
         const { nodes, meta } = parseJSONBackup(text);
         if (nodes.length === 0) {
-          new import_obsidian6.Notice("\u5907\u4EFD\u89E3\u6790\u5931\u8D25\u6216\u6CA1\u6709\u8282\u70B9");
+          new import_obsidian7.Notice("\u5907\u4EFD\u89E3\u6790\u5931\u8D25\u6216\u6CA1\u6709\u8282\u70B9");
           return;
         }
         const targetWs = meta?.workspace && meta.workspace !== "main" ? meta.workspace : "main";
@@ -50674,9 +50706,9 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
           count2++;
         }
         await this.updateMoc(targetWs);
-        new import_obsidian6.Notice(`\u{1F4E5} \u5DF2\u5BFC\u5165 ${count2} \u4E2A\u8BA4\u77E5\u8282\u70B9\u5230\u5DE5\u4F5C\u533A\u300C${targetWs}\u300D`);
+        new import_obsidian7.Notice(`\u{1F4E5} \u5DF2\u5BFC\u5165 ${count2} \u4E2A\u8BA4\u77E5\u8282\u70B9\u5230\u5DE5\u4F5C\u533A\u300C${targetWs}\u300D`);
       } catch (e) {
-        new import_obsidian6.Notice("\u5BFC\u5165\u5931\u8D25\uFF1A" + e.message.slice(0, 100));
+        new import_obsidian7.Notice("\u5BFC\u5165\u5931\u8D25\uFF1A" + e.message.slice(0, 100));
       }
     };
     input.click();
@@ -50684,7 +50716,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
   /** 写入文件（冲突自动加序号） */
   async writeUnique(folder, path3, content) {
     const existing = this.app.vault.getAbstractFileByPath(path3);
-    if (!(existing instanceof import_obsidian6.TFile)) {
+    if (!(existing instanceof import_obsidian7.TFile)) {
       await this.app.vault.create(path3, content);
       return;
     }
@@ -50700,7 +50732,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     let cur = "";
     for (const p of parts) {
       cur = cur ? `${cur}/${p}` : p;
-      if (!(this.app.vault.getAbstractFileByPath(cur) instanceof import_obsidian6.TFolder)) {
+      if (!(this.app.vault.getAbstractFileByPath(cur) instanceof import_obsidian7.TFolder)) {
         try {
           await this.app.vault.createFolder(cur);
         } catch (e) {
@@ -50755,9 +50787,9 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
   async rebuildConvFromNodes(workspace) {
     const ws3 = workspace ?? this.currentWorkspace();
     const folder = this.app.vault.getAbstractFileByPath(this.workspaceFolderPathOf(ws3));
-    if (!(folder instanceof import_obsidian6.TFolder)) return null;
+    if (!(folder instanceof import_obsidian7.TFolder)) return null;
     const files = folder.children.filter(
-      (f) => f instanceof import_obsidian6.TFile && f.name.endsWith(".md") && !f.name.startsWith(".") && f.name !== "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md"
+      (f) => f instanceof import_obsidian7.TFile && f.name.endsWith(".md") && !f.name.startsWith(".") && f.name !== "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md"
     );
     if (files.length === 0) return null;
     const nodes = [];
@@ -50778,11 +50810,11 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
     const folder = this.workspaceFolderPathOf(workspace);
     let f = null;
     const direct = this.app.vault.getAbstractFileByPath(`${folder}/${title}.md`);
-    if (direct instanceof import_obsidian6.TFile) f = direct;
+    if (direct instanceof import_obsidian7.TFile) f = direct;
     const dir = this.app.vault.getAbstractFileByPath(folder);
-    if (!f && dir instanceof import_obsidian6.TFolder) {
+    if (!f && dir instanceof import_obsidian7.TFolder) {
       for (const child of dir.children) {
-        if (!(child instanceof import_obsidian6.TFile) || !child.name.endsWith(".md")) continue;
+        if (!(child instanceof import_obsidian7.TFile) || !child.name.endsWith(".md")) continue;
         if (child.name.startsWith(".") || child.name === "\u8BA4\u77E5\u8FB9\u7F18\u5730\u56FE.md") continue;
         try {
           const content = await this.app.vault.cachedRead(child);
@@ -50795,7 +50827,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian6.Plugin {
         }
       }
     }
-    if (!(f instanceof import_obsidian6.TFile)) return false;
+    if (!(f instanceof import_obsidian7.TFile)) return false;
     try {
       const content = await this.app.vault.read(f);
       const hasLocked = /^locked:\s*true/m.test(content);
@@ -51221,7 +51253,7 @@ ${summary.summaryText}`);
   }
   /** 插件数据目录（vault 外绝对路径；模型缓存/向量索引落盘处） */
   vecPluginDir() {
-    const base = this.app.vault.adapter instanceof import_obsidian6.FileSystemAdapter ? this.app.vault.adapter.getBasePath() : "";
+    const base = this.app.vault.adapter instanceof import_obsidian7.FileSystemAdapter ? this.app.vault.adapter.getBasePath() : "";
     return `${base}/.obsidian/plugins/edge-tutor`.replace(/\\/g, "/");
   }
   /**
@@ -51339,7 +51371,7 @@ ${summary.summaryText}`);
   async buildVectorIndex(root, active) {
     this.vecBuilding = true;
     try {
-      new import_obsidian6.Notice("\u{1F9E0} \u6784\u5EFA\u6559\u6750\u5411\u91CF\u7D22\u5F15\uFF08\u9996\u6B21\u9700\u4E0B\u8F7D\u6A21\u578B\uFF0C\u7EA6\u51E0\u5206\u949F\uFF0C\u53EF\u540E\u53F0\u8FDB\u884C\uFF0C\u671F\u95F4\u4E0D\u5F71\u54CD\u4F7F\u7528\uFF09\u2026");
+      new import_obsidian7.Notice("\u{1F9E0} \u6784\u5EFA\u6559\u6750\u5411\u91CF\u7D22\u5F15\uFF08\u9996\u6B21\u9700\u4E0B\u8F7D\u6A21\u578B\uFF0C\u7EA6\u51E0\u5206\u949F\uFF0C\u53EF\u540E\u53F0\u8FDB\u884C\uFF0C\u671F\u95F4\u4E0D\u5F71\u54CD\u4F7F\u7528\uFF09\u2026");
       this.updateVectorStatus("\u{1F9E0} \u5411\u91CF\uFF1A\u6784\u5EFA\u4E2D\uFF08\u9996\u6B21\u9700\u4E0B\u8F7D\u6A21\u578B\uFF09\u2026");
       const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(root + "/") && f.name !== "toc.md");
       const chunks = [];
@@ -51384,7 +51416,7 @@ ${summary.summaryText}`);
       this.vecIndex = index;
       this.vecIndexRoot = root;
       this.updateVectorStatus(`\u{1F9E0} \u5411\u91CF\uFF1A\u5C31\u7EEA ${chunks.length} \u5757`);
-      new import_obsidian6.Notice(`\u{1F9E0} \u6559\u6750\u5411\u91CF\u7D22\u5F15\u5B8C\u6210\uFF1A${chunks.length} \u5757`);
+      new import_obsidian7.Notice(`\u{1F9E0} \u6559\u6750\u5411\u91CF\u7D22\u5F15\u5B8C\u6210\uFF1A${chunks.length} \u5757`);
       return index;
     } catch (e) {
       this.updateVectorStatus("\u{1F9E0} \u5411\u91CF\uFF1A\u4E0D\u53EF\u7528\uFF08\u6784\u5EFA\u5931\u8D25\uFF0C\u8BE6\u89C1 Console\uFF09");
@@ -51500,7 +51532,7 @@ ${summary.summaryText}`);
 /** 特殊目录：不作为工作区/教材容器（concepts/t-maps/images 是资源与跨教材活页；_exports 是备份树） */
 _EdgeTutorPlugin.SPECIAL_FOLDERS = /* @__PURE__ */ new Set(["concepts", "t-maps", "images", "_exports"]);
 var EdgeTutorPlugin = _EdgeTutorPlugin;
-var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
+var EdgeTutorSettingTab = class extends import_obsidian7.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     /** 教材下拉是否处于"手动输入路径"展开态（display 重绘时保持） */
@@ -51515,7 +51547,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       text: "\u5BF9\u8BDD\u6A21\u5F0F\u8D70\u4E0B\u65B9 Provider\uFF08\u53CD\u4EE3\u514D\u8D39\u53F7\u5373\u53EF\uFF09\uFF1B\u6267\u884C\u6A21\u5F0F\u8D70\u8FD9\u6761\u901A\u9053\uFF08\u5FC5\u987B\u652F\u6301 function calling\uFF0C\u5982 DeepSeek \u5B98\u65B9 API\uFF09\u3002\u4E24\u6761\u901A\u9053\u72EC\u7ACB\u914D\u7F6E\u3002",
       cls: "setting-item-description"
     });
-    new import_obsidian6.Setting(containerEl).setName("Agent \u901A\u9053").setDesc("opencode\uFF08\u672C\u673A serve\uFF0C\u5B8C\u6574 agent\uFF1Abash/\u7F51\u7EDC/\u6587\u4EF6\u5168\u80FD\u529B\uFF0C\u8F6E\u6570\u4E0D\u53D7\u9650\uFF0C\u63A8\u8350\uFF09\uFF1Bopenai\uFF08\u76F4\u8FDE API\uFF0C\u81EA\u5EFA vault \u5DE5\u5177\u5FAA\u73AF\uFF0C\u8F6E\u6570=\u4E0B\u65B9\u8BBE\u7F6E\uFF09\u3002").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(containerEl).setName("Agent \u901A\u9053").setDesc("opencode\uFF08\u672C\u673A serve\uFF0C\u5B8C\u6574 agent\uFF1Abash/\u7F51\u7EDC/\u6587\u4EF6\u5168\u80FD\u529B\uFF0C\u8F6E\u6570\u4E0D\u53D7\u9650\uFF0C\u63A8\u8350\uFF09\uFF1Bopenai\uFF08\u76F4\u8FDE API\uFF0C\u81EA\u5EFA vault \u5DE5\u5177\u5FAA\u73AF\uFF0C\u8F6E\u6570=\u4E0B\u65B9\u8BBE\u7F6E\uFF09\u3002").addDropdown((dropdown) => {
       dropdown.addOption("opencode", "opencode\uFF08\u672C\u673A serve\uFF09");
       dropdown.addOption("openai", "OpenAI \u517C\u5BB9\u76F4\u8FDE");
       dropdown.setValue(this.plugin.settings.agentChannel || "opencode");
@@ -51526,13 +51558,13 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       });
     });
     if (this.plugin.settings.agentChannel === "opencode") {
-      new import_obsidian6.Setting(containerEl).setName("opencode serve \u5730\u5740").setDesc("\u9700\u5148\u542F\u52A8\uFF1Aopencode serve --port 10999").addText(
+      new import_obsidian7.Setting(containerEl).setName("opencode serve \u5730\u5740").setDesc("\u9700\u5148\u542F\u52A8\uFF1Aopencode serve --port 10999").addText(
         (text) => text.setValue(this.plugin.settings.opencodeBase || "http://127.0.0.1:10999").onChange(async (v) => {
           this.plugin.settings.opencodeBase = v.trim() || "http://127.0.0.1:10999";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("Provider / \u6A21\u578B").setDesc("opencode \u914D\u7F6E\u4E2D\u7684 provider \u4E0E\u6A21\u578B id\uFF0C\u5982 opencode-go / deepseek-v4-flash").addText(
+      new import_obsidian7.Setting(containerEl).setName("Provider / \u6A21\u578B").setDesc("opencode \u914D\u7F6E\u4E2D\u7684 provider \u4E0E\u6A21\u578B id\uFF0C\u5982 opencode-go / deepseek-v4-flash").addText(
         (text) => text.setValue(this.plugin.settings.opencodeProvider || "opencode-go").onChange(async (v) => {
           this.plugin.settings.opencodeProvider = v.trim() || "opencode-go";
           await this.plugin.saveSettings();
@@ -51544,32 +51576,32 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
         })
       );
     } else {
-      new import_obsidian6.Setting(containerEl).setName("Agent API \u5730\u5740").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u9700\u652F\u6301 tool_calls\uFF09\u3002\u9ED8\u8BA4 opencode-go \u7F51\u5173\u3002").addText(
+      new import_obsidian7.Setting(containerEl).setName("Agent API \u5730\u5740").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u9700\u652F\u6301 tool_calls\uFF09\u3002\u9ED8\u8BA4 opencode-go \u7F51\u5173\u3002").addText(
         (text) => text.setValue(this.plugin.settings.agentApiBase || "https://opencode.ai/zen/go/v1").onChange(async (v) => {
           this.plugin.settings.agentApiBase = v.trim() || "https://opencode.ai/zen/go/v1";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("Agent API Key \u73AF\u5883\u53D8\u91CF\u540D").setDesc("\u4ECE\u73AF\u5883\u53D8\u91CF\u8BFB\u53D6\u5BC6\u94A5\uFF08\u4F18\u5148\u4E8E\u4E0B\u9762\u660E\u6587\uFF09\u3002opencode-go \u7F51\u5173 key\u3002").addText(
+      new import_obsidian7.Setting(containerEl).setName("Agent API Key \u73AF\u5883\u53D8\u91CF\u540D").setDesc("\u4ECE\u73AF\u5883\u53D8\u91CF\u8BFB\u53D6\u5BC6\u94A5\uFF08\u4F18\u5148\u4E8E\u4E0B\u9762\u660E\u6587\uFF09\u3002opencode-go \u7F51\u5173 key\u3002").addText(
         (text) => text.setValue(this.plugin.settings.agentApiKeyEnv || "OPENCODE_GO_API_KEY").onChange(async (v) => {
           this.plugin.settings.agentApiKeyEnv = v.trim() || "OPENCODE_GO_API_KEY";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("Agent API Key\uFF08\u660E\u6587\uFF09").setDesc("\u73AF\u5883\u53D8\u91CF\u8BFB\u4E0D\u5230\u65F6\u4F7F\u7528\uFF1B\u4EC5\u5B58\u672C\u5730 data.json\u3002").addText((text) => {
+      new import_obsidian7.Setting(containerEl).setName("Agent API Key\uFF08\u660E\u6587\uFF09").setDesc("\u73AF\u5883\u53D8\u91CF\u8BFB\u4E0D\u5230\u65F6\u4F7F\u7528\uFF1B\u4EC5\u5B58\u672C\u5730 data.json\u3002").addText((text) => {
         text.inputEl.type = "password";
         text.setPlaceholder("sk-...").setValue(this.plugin.settings.agentApiKey || "").onChange(async (v) => {
           this.plugin.settings.agentApiKey = v.trim();
           await this.plugin.saveSettings();
         });
       });
-      new import_obsidian6.Setting(containerEl).setName("Agent \u6A21\u578B").setDesc("\u652F\u6301 function calling \u7684\u6A21\u578B\uFF08\u9ED8\u8BA4 opencode-go \u7F51\u5173\u7684 deepseek-v4-flash\uFF09\u3002").addText(
+      new import_obsidian7.Setting(containerEl).setName("Agent \u6A21\u578B").setDesc("\u652F\u6301 function calling \u7684\u6A21\u578B\uFF08\u9ED8\u8BA4 opencode-go \u7F51\u5173\u7684 deepseek-v4-flash\uFF09\u3002").addText(
         (text) => text.setValue(this.plugin.settings.agentModel || "deepseek-v4-flash").onChange(async (v) => {
           this.plugin.settings.agentModel = v.trim() || "deepseek-v4-flash";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("\u6700\u5927\u8F6E\u6570").setDesc("\u81EA\u5EFA\u5DE5\u5177\u5FAA\u73AF\u7684\u6700\u5927\u8F6E\u6570\uFF08\u9ED8\u8BA4 30\uFF09\u3002").addText(
+      new import_obsidian7.Setting(containerEl).setName("\u6700\u5927\u8F6E\u6570").setDesc("\u81EA\u5EFA\u5DE5\u5177\u5FAA\u73AF\u7684\u6700\u5927\u8F6E\u6570\uFF08\u9ED8\u8BA4 30\uFF09\u3002").addText(
         (text) => text.setPlaceholder("30").setValue(String(this.plugin.settings.agentMaxTurns ?? 30)).onChange(async (v) => {
           const n = parseInt(v, 10);
           this.plugin.settings.agentMaxTurns = Number.isFinite(n) && n > 0 ? n : 30;
@@ -51578,7 +51610,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       );
     }
     containerEl.createEl("h3", { text: "\u{1F4AC} \u5BF9\u8BDD\uFF08\u4EF7\u503C\u8BC6\u522B\u5668\uFF09\u901A\u9053" });
-    new import_obsidian6.Setting(containerEl).setName("Provider").setDesc("\u9009\u62E9 API \u63D0\u4F9B\u5546\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587\u5BC6\u94A5\uFF1A\u5207\u6362\u540E\u81EA\u52A8\u586B\u5145\u5730\u5740\u4E0E\u6A21\u578B\uFF0C\u5BC6\u94A5\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF08\u89C1\u4E0B\u65B9\u5BC6\u94A5\u72B6\u6001\uFF09\uFF0C\u4E5F\u53EF\u624B\u52A8\u586B\u5199\u3002").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(containerEl).setName("Provider").setDesc("\u9009\u62E9 API \u63D0\u4F9B\u5546\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587\u5BC6\u94A5\uFF1A\u5207\u6362\u540E\u81EA\u52A8\u586B\u5145\u5730\u5740\u4E0E\u6A21\u578B\uFF0C\u5BC6\u94A5\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF08\u89C1\u4E0B\u65B9\u5BC6\u94A5\u72B6\u6001\uFF09\uFF0C\u4E5F\u53EF\u624B\u52A8\u586B\u5199\u3002").addDropdown((dropdown) => {
       for (const p of PRESET_PROVIDERS) {
         dropdown.addOption(p.id, p.name);
       }
@@ -51596,7 +51628,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
         }
       });
     });
-    new import_obsidian6.Setting(containerEl).setName("\u6A21\u578B").setDesc("\u5F53\u524D Provider \u7684\u53EF\u7528\u6A21\u578B\u3002").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(containerEl).setName("\u6A21\u578B").setDesc("\u5F53\u524D Provider \u7684\u53EF\u7528\u6A21\u578B\u3002").addDropdown((dropdown) => {
       const provider = PRESET_PROVIDERS.find((p) => p.id === this.plugin.settings.activeProvider);
       const models = provider?.models?.length ? provider.models : [this.plugin.settings.model];
       const all = /* @__PURE__ */ new Set([...models, this.plugin.settings.model]);
@@ -51609,13 +51641,13 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian6.Setting(containerEl).setName("API \u5730\u5740").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u5207\u6362 Provider \u81EA\u52A8\u586B\u5145\uFF0C\u53EF\u624B\u52A8\u6539\uFF09").addText(
+    new import_obsidian7.Setting(containerEl).setName("API \u5730\u5740").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u5207\u6362 Provider \u81EA\u52A8\u586B\u5145\uFF0C\u53EF\u624B\u52A8\u6539\uFF09").addText(
       (text) => text.setValue(this.plugin.settings.apiBase).onChange(async (v) => {
         this.plugin.settings.apiBase = v;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("API Key").setDesc("\u5F53\u524D Provider \u7684\u5BC6\u94A5\uFF08\u4EC5\u5B58\u672C\u5730 data.json\uFF09\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587 key\uFF1A\u5207\u6362 Provider \u540E\u8FD9\u91CC\u4E3A\u7A7A\uFF0C\u5BC6\u94A5\u81EA\u52A8\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF1Bchat2api \u53CD\u4EE3 JWT \u4ECD\u53EF\u5728\u6B64\u586B\u5199\u3002").addText((text) => {
+    new import_obsidian7.Setting(containerEl).setName("API Key").setDesc("\u5F53\u524D Provider \u7684\u5BC6\u94A5\uFF08\u4EC5\u5B58\u672C\u5730 data.json\uFF09\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587 key\uFF1A\u5207\u6362 Provider \u540E\u8FD9\u91CC\u4E3A\u7A7A\uFF0C\u5BC6\u94A5\u81EA\u52A8\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF1Bchat2api \u53CD\u4EE3 JWT \u4ECD\u53EF\u5728\u6B64\u586B\u5199\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey).onChange(async (v) => {
         this.plugin.settings.apiKey = v.trim();
@@ -51637,7 +51669,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
         }
         return "\u26A0\uFE0F \u672A\u914D\u7F6E\u5BC6\u94A5";
       })();
-      new import_obsidian6.Setting(containerEl).setName("\u5BC6\u94A5\u72B6\u6001").setDesc(
+      new import_obsidian7.Setting(containerEl).setName("\u5BC6\u94A5\u72B6\u6001").setDesc(
         "\u5F53\u524D Provider\uFF08" + activeProvider.name + "\uFF09\uFF1A" + keySource + "\u3002\u73AF\u5883\u53D8\u91CF\u4E3A\u7A7A\u7684 Provider\uFF0C\u5207\u6362\u540E\u9700\u5728\u672C\u673A\u8BBE\u7F6E\u5BF9\u5E94\u73AF\u5883\u53D8\u91CF\u6216\u5728\u4E0A\u65B9\u624B\u52A8\u586B\u5199\u3002"
       ).addButton(
         (btn) => btn.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
@@ -51651,9 +51683,9 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
               [{ role: "user", content: "ping" }],
               { maxTokens: 4, signal: ctrl.signal }
             );
-            new import_obsidian6.Notice("\u2705 \u8FDE\u63A5\u6210\u529F\uFF1A" + activeProvider.name);
+            new import_obsidian7.Notice("\u2705 \u8FDE\u63A5\u6210\u529F\uFF1A" + activeProvider.name);
           } catch (e) {
-            new import_obsidian6.Notice(
+            new import_obsidian7.Notice(
               "\u274C \u8FDE\u63A5\u5931\u8D25\uFF1A" + (e instanceof Error ? e.message.slice(0, 200) : String(e)),
               8e3
             );
@@ -51665,27 +51697,27 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
         })
       );
     })();
-    new import_obsidian6.Setting(containerEl).setName("\u56DE\u7B54\u957F\u5EA6\uFF08max_tokens\uFF09").setDesc("\u56DE\u7B54\u6700\u5927 token \u6570\u3002\u8D8A\u5927\u56DE\u7B54\u8D8A\u957F\uFF08\u9ED8\u8BA4 4096\uFF09\u3002").addText(
+    new import_obsidian7.Setting(containerEl).setName("\u56DE\u7B54\u957F\u5EA6\uFF08max_tokens\uFF09").setDesc("\u56DE\u7B54\u6700\u5927 token \u6570\u3002\u8D8A\u5927\u56DE\u7B54\u8D8A\u957F\uFF08\u9ED8\u8BA4 4096\uFF09\u3002").addText(
       (text) => text.setPlaceholder("4096").setValue(String(this.plugin.settings.maxTokens ?? 4096)).onChange(async (v) => {
         const n = parseInt(v, 10);
         this.plugin.settings.maxTokens = Number.isFinite(n) && n > 0 ? n : 4096;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("\u53D1\u6563\u5EA6\uFF08temperature\uFF09").setDesc("0-2\uFF0C\u8D8A\u9AD8\u56DE\u7B54\u8D8A\u53D1\u6563\u3001\u8D8A\u6709\u521B\u9020\u6027\uFF08\u9ED8\u8BA4 0.8\uFF09\u3002").addText(
+    new import_obsidian7.Setting(containerEl).setName("\u53D1\u6563\u5EA6\uFF08temperature\uFF09").setDesc("0-2\uFF0C\u8D8A\u9AD8\u56DE\u7B54\u8D8A\u53D1\u6563\u3001\u8D8A\u6709\u521B\u9020\u6027\uFF08\u9ED8\u8BA4 0.8\uFF09\u3002").addText(
       (text) => text.setPlaceholder("0.8").setValue(String(this.plugin.settings.temperature ?? 0.8)).onChange(async (v) => {
         const n = parseFloat(v);
         this.plugin.settings.temperature = Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 0.8;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("\u8BA4\u77E5\u8282\u70B9\u76EE\u5F55").setDesc("vault \u5185\u76F8\u5BF9\u8DEF\u5F84\uFF0C\u8BA4\u77E5\u8282\u70B9\u548C\u5730\u56FE\u653E\u8FD9\u91CC\uFF08\u5B66\u4E60\u4EA7\u7269\u5F52\u4F4D\uFF1A_wiki/ \u4E0B\uFF09").addText(
+    new import_obsidian7.Setting(containerEl).setName("\u8BA4\u77E5\u8282\u70B9\u76EE\u5F55").setDesc("vault \u5185\u76F8\u5BF9\u8DEF\u5F84\uFF0C\u8BA4\u77E5\u8282\u70B9\u548C\u5730\u56FE\u653E\u8FD9\u91CC\uFF08\u5B66\u4E60\u4EA7\u7269\u5F52\u4F4D\uFF1A_wiki/ \u4E0B\uFF09").addText(
       (text) => text.setValue(this.plugin.settings.nodeFolder).onChange(async (v) => {
         this.plugin.settings.nodeFolder = v;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("\u6559\u6750\u6839\u76EE\u5F55").setDesc("\u591A\u6559\u6750\u652F\u6301\uFF1A\u4E0B\u62C9\u4ECE books.yaml \u6CE8\u518C\u8868\u8BFB\u53D6\uFF0C\u5207\u6362\u540E\u68C0\u7D22/\u951A\u70B9/\u7D22\u5F15\u81EA\u52A8\u8DDF\u968F\u3002\u9009\u201C\u270F\uFE0F \u624B\u52A8\u8F93\u5165\u8DEF\u5F84\u2026\u201D\u53EF\u586B\u4EFB\u610F\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF08\u4E0D\u5199\u56DE\u6CE8\u518C\u8868\uFF09\u3002").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(containerEl).setName("\u6559\u6750\u6839\u76EE\u5F55").setDesc("\u591A\u6559\u6750\u652F\u6301\uFF1A\u4E0B\u62C9\u4ECE books.yaml \u6CE8\u518C\u8868\u8BFB\u53D6\uFF0C\u5207\u6362\u540E\u68C0\u7D22/\u951A\u70B9/\u7D22\u5F15\u81EA\u52A8\u8DDF\u968F\u3002\u9009\u201C\u270F\uFE0F \u624B\u52A8\u8F93\u5165\u8DEF\u5F84\u2026\u201D\u53EF\u586B\u4EFB\u610F\u81EA\u5B9A\u4E49\u8DEF\u5F84\uFF08\u4E0D\u5199\u56DE\u6CE8\u518C\u8868\uFF09\u3002").addDropdown((dropdown) => {
       const current = this.plugin.settings.textbookRoot.replace(/\\/g, "/").replace(/\/+$/, "");
       const known = /* @__PURE__ */ new Set();
       for (const b of this.plugin.textbookRegistry) {
@@ -51709,7 +51741,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       });
     });
     if (this.customRootEditing) {
-      new import_obsidian6.Setting(containerEl).setName("\u81EA\u5B9A\u4E49\u6559\u6750\u6839\u76EE\u5F55").setDesc("vault \u5185\u76F8\u5BF9\u8DEF\u5F84\uFF08\u4E0D\u4F1A\u5199\u56DE books.yaml \u6CE8\u518C\u8868\uFF09").addText(
+      new import_obsidian7.Setting(containerEl).setName("\u81EA\u5B9A\u4E49\u6559\u6750\u6839\u76EE\u5F55").setDesc("vault \u5185\u76F8\u5BF9\u8DEF\u5F84\uFF08\u4E0D\u4F1A\u5199\u56DE books.yaml \u6CE8\u518C\u8868\uFF09").addText(
         (text) => text.setValue(this.plugin.settings.textbookRoot).onChange(async (v) => {
           if (v.trim()) await this.plugin.setTextbookRoot(v);
         })
@@ -51721,7 +51753,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       });
     }
     containerEl.createEl("h3", { text: "\u{1F50D} \u6559\u6750\u5411\u91CF\u68C0\u7D22\uFF08embedding\uFF09" });
-    new import_obsidian6.Setting(containerEl).setName("\u5411\u91CF\u6A21\u578B\u6765\u6E90").setDesc("\u672C\u5730 bge-small-zh\uFF08\u9ED8\u8BA4\uFF0C\u79BB\u7EBF\u53EF\u7528\uFF09\uFF1B\u963F\u91CC\u767E\u70BC text-embedding-v4\uFF08\u4E2D\u6587\u68C0\u7D22\u6700\u5F3A\u6863\uFF0CAPI \u6279\u5904\u7406\u6784\u5EFA\u66F4\u5FEB\uFF0C\u6559\u6750\u5185\u5BB9\u5C06\u53D1\u9001\u81F3\u963F\u91CC\u4E91\uFF1B\u65B0\u7528\u6237 100 \u4E07 tokens \u514D\u8D39\u989D\u5EA6\u5185\u5373\u53EF\u5B8C\u6210\u5168\u91CF\u6784\u5EFA\uFF09\u3002").addDropdown(
+    new import_obsidian7.Setting(containerEl).setName("\u5411\u91CF\u6A21\u578B\u6765\u6E90").setDesc("\u672C\u5730 bge-small-zh\uFF08\u9ED8\u8BA4\uFF0C\u79BB\u7EBF\u53EF\u7528\uFF09\uFF1B\u963F\u91CC\u767E\u70BC text-embedding-v4\uFF08\u4E2D\u6587\u68C0\u7D22\u6700\u5F3A\u6863\uFF0CAPI \u6279\u5904\u7406\u6784\u5EFA\u66F4\u5FEB\uFF0C\u6559\u6750\u5185\u5BB9\u5C06\u53D1\u9001\u81F3\u963F\u91CC\u4E91\uFF1B\u65B0\u7528\u6237 100 \u4E07 tokens \u514D\u8D39\u989D\u5EA6\u5185\u5373\u53EF\u5B8C\u6210\u5168\u91CF\u6784\u5EFA\uFF09\u3002").addDropdown(
       (dropdown) => dropdown.addOption("local", "\u672C\u5730 bge-small-zh\uFF08\u79BB\u7EBF\uFF09").addOption("dashscope", "\u963F\u91CC\u767E\u70BC text-embedding-v4\uFF08\u63A8\u8350\uFF09").setValue(this.plugin.settings.embeddingProvider).onChange(async (v) => {
         this.plugin.settings.embeddingProvider = v;
         await this.plugin.saveSettings();
@@ -51729,7 +51761,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       })
     );
     if (this.plugin.settings.embeddingProvider === "dashscope") {
-      new import_obsidian6.Setting(containerEl).setName("Embedding API Key").setDesc("\u963F\u91CC\u4E91\u767E\u70BC\u5BC6\u94A5\uFF08\u7559\u7A7A\u81EA\u52A8\u56DE\u9000\u672C\u5730 bge-small\uFF1B\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_EMBEDDING_API_KEY \u4F18\u5148\uFF09\u3002").addText((text) => {
+      new import_obsidian7.Setting(containerEl).setName("Embedding API Key").setDesc("\u963F\u91CC\u4E91\u767E\u70BC\u5BC6\u94A5\uFF08\u7559\u7A7A\u81EA\u52A8\u56DE\u9000\u672C\u5730 bge-small\uFF1B\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_EMBEDDING_API_KEY \u4F18\u5148\uFF09\u3002").addText((text) => {
         text.setValue(this.plugin.settings.embeddingApiKey);
         text.inputEl.type = "password";
         text.onChange(async (v) => {
@@ -51737,19 +51769,19 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
-      new import_obsidian6.Setting(containerEl).setName("API \u5730\u5740\uFF08base URL\uFF09").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u4E0D\u542B /embeddings\uFF09\u3002\u9ED8\u8BA4\u963F\u91CC\u5B98\u65B9\u516C\u5171\u57DF\u540D\uFF1B\u4E13\u5C5E\u5DE5\u4F5C\u533A\u586B https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1").addText(
+      new import_obsidian7.Setting(containerEl).setName("API \u5730\u5740\uFF08base URL\uFF09").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u4E0D\u542B /embeddings\uFF09\u3002\u9ED8\u8BA4\u963F\u91CC\u5B98\u65B9\u516C\u5171\u57DF\u540D\uFF1B\u4E13\u5C5E\u5DE5\u4F5C\u533A\u586B https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1").addText(
         (text) => text.setValue(this.plugin.settings.embeddingApiBase).onChange(async (v) => {
           this.plugin.settings.embeddingApiBase = v.trim();
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("\u6A21\u578B").setDesc("text-embedding-v4\uFF08\u6700\u65B0\uFF0CQwen3-Embedding \u7CFB\u5217\uFF09/ text-embedding-v3\u3002\u5207\u6362\u540E\u7D22\u5F15\u81EA\u52A8\u5931\u6548\uFF0C\u4E0B\u6B21\u68C0\u7D22\u65F6\u91CD\u5EFA\u3002").addDropdown(
+      new import_obsidian7.Setting(containerEl).setName("\u6A21\u578B").setDesc("text-embedding-v4\uFF08\u6700\u65B0\uFF0CQwen3-Embedding \u7CFB\u5217\uFF09/ text-embedding-v3\u3002\u5207\u6362\u540E\u7D22\u5F15\u81EA\u52A8\u5931\u6548\uFF0C\u4E0B\u6B21\u68C0\u7D22\u65F6\u91CD\u5EFA\u3002").addDropdown(
         (dropdown) => dropdown.addOption("text-embedding-v4", "text-embedding-v4\uFF08\u63A8\u8350\uFF09").addOption("text-embedding-v3", "text-embedding-v3").setValue(this.plugin.settings.embeddingModel).onChange(async (v) => {
           this.plugin.settings.embeddingModel = v;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("\u5411\u91CF\u7EF4\u5EA6").setDesc("text-embedding-v4 \u652F\u6301 2048/1536/1024/768/512/256/128/64\uFF1B\u7EF4\u5EA6\u8D8A\u9AD8\u5B58\u50A8\u8D8A\u5927\uFF0C1024 \u4E3A\u8D28\u91CF/\u4F53\u79EF\u5E73\u8861\u63A8\u8350\u503C\u3002").addDropdown(
+      new import_obsidian7.Setting(containerEl).setName("\u5411\u91CF\u7EF4\u5EA6").setDesc("text-embedding-v4 \u652F\u6301 2048/1536/1024/768/512/256/128/64\uFF1B\u7EF4\u5EA6\u8D8A\u9AD8\u5B58\u50A8\u8D8A\u5927\uFF0C1024 \u4E3A\u8D28\u91CF/\u4F53\u79EF\u5E73\u8861\u63A8\u8350\u503C\u3002").addDropdown(
         (dropdown) => dropdown.addOption("2048", "2048").addOption("1536", "1536").addOption("1024", "1024\uFF08\u63A8\u8350\uFF09").addOption("768", "768").addOption("512", "512").setValue(String(this.plugin.settings.embeddingDim)).onChange(async (v) => {
           this.plugin.settings.embeddingDim = parseInt(v, 10);
           await this.plugin.saveSettings();
@@ -51757,7 +51789,7 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       );
     }
     containerEl.createEl("h3", { text: "\u{1F3AF} \u68C0\u7D22\u91CD\u6392\uFF08rerank\uFF09" });
-    new import_obsidian6.Setting(containerEl).setName("\u91CD\u6392\u6A21\u578B\u6765\u6E90").setDesc("\u672C\u5730 bge-reranker-v2-m3\uFF08\u9ED8\u8BA4\uFF0C\u79BB\u7EBF\u53EF\u7528\uFF09\uFF1B\u963F\u91CC\u767E\u70BC qwen3-rerank\uFF08Qwen3-Reranker-8B\uFF0C\u91CD\u6392\u8D28\u91CF\u6700\u9AD8\u6863\uFF0C\u6559\u6750\u6BB5\u843D\u5C06\u53D1\u9001\u81F3\u963F\u91CC\u4E91\uFF0C\xA50.5/\u767E\u4E07 tokens\uFF0C\u6BCF\u6B21\u63D0\u95EE\u4EC5\u5BF9 top-40 \u5019\u9009\u6253\u5206\uFF0C\u7528\u91CF\u6781\u5C0F\uFF09\u3002").addDropdown(
+    new import_obsidian7.Setting(containerEl).setName("\u91CD\u6392\u6A21\u578B\u6765\u6E90").setDesc("\u672C\u5730 bge-reranker-v2-m3\uFF08\u9ED8\u8BA4\uFF0C\u79BB\u7EBF\u53EF\u7528\uFF09\uFF1B\u963F\u91CC\u767E\u70BC qwen3-rerank\uFF08Qwen3-Reranker-8B\uFF0C\u91CD\u6392\u8D28\u91CF\u6700\u9AD8\u6863\uFF0C\u6559\u6750\u6BB5\u843D\u5C06\u53D1\u9001\u81F3\u963F\u91CC\u4E91\uFF0C\xA50.5/\u767E\u4E07 tokens\uFF0C\u6BCF\u6B21\u63D0\u95EE\u4EC5\u5BF9 top-40 \u5019\u9009\u6253\u5206\uFF0C\u7528\u91CF\u6781\u5C0F\uFF09\u3002").addDropdown(
       (dropdown) => dropdown.addOption("local", "\u672C\u5730 bge-reranker\uFF08\u79BB\u7EBF\uFF09").addOption("dashscope", "\u963F\u91CC\u767E\u70BC qwen3-rerank\uFF08\u63A8\u8350\uFF09").setValue(this.plugin.settings.rerankProvider).onChange(async (v) => {
         this.plugin.settings.rerankProvider = v;
         await this.plugin.saveSettings();
@@ -51765,19 +51797,19 @@ var EdgeTutorSettingTab = class extends import_obsidian6.PluginSettingTab {
       })
     );
     if (this.plugin.settings.rerankProvider === "dashscope") {
-      new import_obsidian6.Setting(containerEl).setName("API \u5730\u5740\uFF08base URL\uFF09").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u4E0D\u542B /reranks\uFF1B\u6CE8\u610F\u662F compatible-api \u8DEF\u5F84\uFF0C\u4E0E embedding \u7684 compatible-mode \u4E0D\u540C\uFF09\u3002\u9ED8\u8BA4\u963F\u91CC\u5B98\u65B9\u516C\u5171\u57DF\u540D\uFF1B\u4E13\u5C5E\u5DE5\u4F5C\u533A\u586B https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-api/v1").addText(
+      new import_obsidian7.Setting(containerEl).setName("API \u5730\u5740\uFF08base URL\uFF09").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u4E0D\u542B /reranks\uFF1B\u6CE8\u610F\u662F compatible-api \u8DEF\u5F84\uFF0C\u4E0E embedding \u7684 compatible-mode \u4E0D\u540C\uFF09\u3002\u9ED8\u8BA4\u963F\u91CC\u5B98\u65B9\u516C\u5171\u57DF\u540D\uFF1B\u4E13\u5C5E\u5DE5\u4F5C\u533A\u586B https://ws-xxx.cn-beijing.maas.aliyuncs.com/compatible-api/v1").addText(
         (text) => text.setValue(this.plugin.settings.rerankApiBase).onChange(async (v) => {
           this.plugin.settings.rerankApiBase = v.trim();
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("\u6A21\u578B").setDesc("qwen3-rerank\uFF08Qwen3-Reranker-8B\uFF0COpenAI \u517C\u5BB9 reranks \u7AEF\u70B9\uFF09\u3002").addText(
+      new import_obsidian7.Setting(containerEl).setName("\u6A21\u578B").setDesc("qwen3-rerank\uFF08Qwen3-Reranker-8B\uFF0COpenAI \u517C\u5BB9 reranks \u7AEF\u70B9\uFF09\u3002").addText(
         (text) => text.setValue(this.plugin.settings.rerankModel).onChange(async (v) => {
           this.plugin.settings.rerankModel = v.trim();
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("API Key").setDesc("\u590D\u7528\u4E0A\u65B9 Embedding API Key\uFF08\u540C\u4E00\u767E\u70BC\u8D26\u53F7\uFF1B\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_EMBEDDING_API_KEY \u4F18\u5148\uFF09\u3002").addText((text) => {
+      new import_obsidian7.Setting(containerEl).setName("API Key").setDesc("\u590D\u7528\u4E0A\u65B9 Embedding API Key\uFF08\u540C\u4E00\u767E\u70BC\u8D26\u53F7\uFF1B\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_EMBEDDING_API_KEY \u4F18\u5148\uFF09\u3002").addText((text) => {
         text.setValue(this.plugin.settings.embeddingApiKey);
         text.inputEl.type = "password";
         text.setPlaceholder("\u590D\u7528 Embedding API Key\uFF0C\u65E0\u9700\u91CD\u590D\u586B\u5199");

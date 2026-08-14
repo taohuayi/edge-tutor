@@ -71,7 +71,7 @@ import {
   uniqueNodePath,
 } from "./data";
 
-import { PromptModal, TutorView, VIEW_TYPE_TUTOR } from "./view";
+import { TutorView, VIEW_TYPE_TUTOR } from "./view";
 
 /** 条件 rerank 触发阈值（向量置信分；< 此值或两路分歧才重排，保守值可调） */
 const RERANK_TRIGGER_SCORE = 0.35;
