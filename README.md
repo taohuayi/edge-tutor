@@ -4,6 +4,8 @@
 
 **Edge Tutor is an early, Chinese-first Obsidian plugin for deliberate learning with your own notes and AI provider.** It is built for learners who do not want an AI chat to disappear after one answer.
 
+[中文说明](README.zh-CN.md)
+
 ## What it does
 
 - Ask from selected text in any note and keep a source anchor to the original passage.
