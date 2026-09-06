@@ -3,7 +3,7 @@
  * 设计原则：价值识别器 —— 识别"珍贵/细节"，推深但不拉回
  *
  * 安全：源码不内置任何明文 key。生效 key 解析优先级：
- *   ① 设置里显式填写的 apiKey（如 chat2api 反代 JWT）
+ *   ① 设置里显式填写的 apiKey
  *   ② Provider 专属环境变量（provider.keyEnv，如 EDGE_TUTOR_KEY_DEEPSEEK）
  *   ③ 全局环境变量（settings.apiKeyEnv，默认 EDGE_TUTOR_API_KEY）
  *   ④ 预设自带 key（自 v0.9.0 起全部为空字符串）
@@ -102,40 +102,23 @@ export const PRESET_PROVIDERS: Provider[] = [
     apiBase: "https://api.deepseek.com/v1",
     apiKey: "",
     keyEnv: "EDGE_TUTOR_KEY_DEEPSEEK",
-    models: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"],
+    models: ["deepseek-chat", "deepseek-reasoner"],
   },
   {
-    id: "tokeness-claude",
-    name: "Tokeness（Claude）",
-    apiBase: "https://n.tokeness.io/v1",
+    id: "openai",
+    name: "OpenAI",
+    apiBase: "https://api.openai.com/v1",
     apiKey: "",
-    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_CLAUDE",
-    // 实测（2026-08-10）：此 key 挂在 Claude 组，仅这 4 个模型可用，其余返回 model_not_found
-    models: ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    keyEnv: "EDGE_TUTOR_KEY_OPENAI",
+    models: ["gpt-4.1-mini"],
   },
   {
-    id: "tokeness-gpt",
-    name: "Tokeness（GPT）",
-    apiBase: "https://n.tokeness.io/v1",
+    id: "custom",
+    name: "Custom OpenAI-compatible API",
+    apiBase: "",
     apiKey: "",
-    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_GPT",
-    // GPT 组 key（来源：Hermes config.yaml 的 providers.tokeness-gpt，2026-08-10 实测 6 模型全通）
-    models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-  },
-  {
-    id: "zhuomatech",
-    name: "Zhuomatech",
-    apiBase: "https://api.zhuomatech.cn/v1",
-    apiKey: "",
-    keyEnv: "EDGE_TUTOR_KEY_ZHUOMATECH",
-    models: ["codex-auto-review", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra"],
-  },
-  {
-    id: "chat2api",
-    name: "chat2api 反代（本机 5005）",
-    apiBase: "http://127.0.0.1:5005/v1",
-    apiKey: "",
-    models: ["gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5", "gpt-4.5o", "gpt-4o", "gpt-4o-mini", "o3-mini"],
+    keyEnv: "EDGE_TUTOR_KEY_CUSTOM",
+    models: ["your-model"],
   },
 ];
 
@@ -144,17 +127,17 @@ export const DEFAULT_SETTINGS: TutorSettings = {
   apiKeyEnv: "EDGE_TUTOR_API_KEY",
   apiKey: "",
   model: "deepseek-chat",
-  nodeFolder: "learning/peizhi/learn/_wiki/认知边缘",
-  textbookRoot: "learning/peizhi/learn/_materials/math/张宇基础30讲/markdown_v2/最终版",
+  nodeFolder: "Edge Tutor",
+  textbookRoot: "",
   draft: null,
   maxTokens: 4096,
   temperature: 0.7,
-  activeProvider: "chat2api",
-  agentApiBase: "https://opencode.ai/zen/go/v1",
-  agentApiKeyEnv: "OPENCODE_GO_API_KEY",
+  activeProvider: "deepseek",
+  agentApiBase: "https://api.openai.com/v1",
+  agentApiKeyEnv: "EDGE_TUTOR_AGENT_API_KEY",
   agentApiKey: "",
-  agentModel: "deepseek-v4-flash",
-  agentChannel: "opencode",
+  agentModel: "gpt-4.1-mini",
+  agentChannel: "openai",
   opencodeBase: "http://127.0.0.1:10999",
   opencodeProvider: "opencode-go",
   opencodeModel: "deepseek-v4-flash",
@@ -210,7 +193,7 @@ export function readEnv(name: string, env?: Record<string, string | undefined>):
 
 /**
  * 解析当前 Provider 的生效 API key（纯函数，env 可注入）：
- * ① 设置显式 apiKey（如 chat2api 反代 JWT）
+ * ① 设置显式 apiKey
  * ② Provider 专属环境变量（provider.keyEnv）
  * ③ 全局环境变量（settings.apiKeyEnv）
  * ④ 预设自带 key（v0.9.0 起恒为空）

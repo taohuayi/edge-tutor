@@ -224,10 +224,10 @@ export default class EdgeTutorPlugin extends Plugin {
   /** 教材注册表缓存（books.yaml 解析；设置页教材下拉的数据源，失败为空数组 → 降级手动输入） */
   textbookRegistry: TextbookEntry[] = [];
 
-  /** 刷新教材注册表（books.yaml 是 ingest_book.py 维护的权威注册表；读取失败静默降级） */
+  /** Refresh the optional, vault-local textbook registry. Missing registry falls back to manual paths. */
   async refreshTextbookRegistry(): Promise<void> {
     try {
-      const raw = await this.app.vault.adapter.read("learning/peizhi/learn/_materials/books.yaml");
+      const raw = await this.app.vault.adapter.read(".edge-tutor/books.yaml");
       this.textbookRegistry = parseBooksYaml(raw);
     } catch (e) {
       console.warn("[edge-tutor] books.yaml 读取失败，教材下拉降级为手动输入", (e as Error).message.slice(0, 100));
@@ -249,7 +249,7 @@ export default class EdgeTutorPlugin extends Plugin {
     this.vecIndex = null;
     this.vecIndexRoot = "";
     // 教材-工作区联动：切到同名教材工作区（无则自动建为教材容器），激活状态持久化
-    // （工作区模型：教材根工作区 + 教材下子工作区，如 认知边缘/张宇基础30讲/代数变形技巧）
+    // A reference collection can act as a workspace container with nested topics.
     const wsName = this.workspaceNameForTextbook(normalized);
     if (wsName) {
       const workspaces = await this.discoverWorkspaces();
@@ -615,7 +615,7 @@ export default class EdgeTutorPlugin extends Plugin {
 
   /**
    * 重命名工作区（移动文件夹）。
-   * 子工作区（含 /）保留教材容器前缀：张宇基础30讲/双曲函数体系 → 张宇基础30讲/新名，
+   * Nested workspaces preserve their collection prefix, for example Calculus/limits → Calculus/derivatives.
    * 不再挪到根级。返回最终工作区 id（失败/同名返回 null，调用方保持现状）。
    */
   async renameWorkspace(oldName: string, newName: string): Promise<string | null> {
@@ -806,15 +806,15 @@ export default class EdgeTutorPlugin extends Plugin {
       new Notice("当前工作区没有会话可导出");
       return;
     }
-    const exportFolder = "learning/peizhi/learn/_wiki/认知边缘/_exports";
+    const exportFolder = `${this.settings.nodeFolder}/_exports`;
     await this.ensureFolder(exportFolder);
     const stamp = new Date().toISOString().slice(0, 10);
-    // 工作区名可能含教材前缀（如 张宇基础30讲/函数的变化）→ 文件名里 / 替换为 _
+    // A workspace name can contain collection prefixes; replace / in export file names.
     const safeWs = ws.replace(/[/\\]/g, "_");
     if (format === "markdown") {
       const md = formatConvMarkdown(conv, {
         title: `认知边缘会话导出（${ws === "main" ? "默认" : ws}）`,
-        source: "张宇基础30讲",
+        source: "Edge Tutor",
         workspace: ws,
       });
       const path = `${exportFolder}/认知边缘导出_${safeWs}_${stamp}.md`;
@@ -1229,7 +1229,7 @@ export default class EdgeTutorPlugin extends Plugin {
   /**
    * LLM 查询理解 + 章节路由：一步非流式调用（≤2s 超时，失败返回 null）把口语问题
    * 转为结构化理解（concept/intent/knowledge_need/related_terms/chapters/3 个查询变体）——
-   * 解决"表述完全不同/跨章节综合"类查询。复用对话通道（chat2api），不额外消耗 agent 通道。
+   * Handles differently worded and cross-chapter questions through the configured chat channel.
    * JSON 输出优先；解析失败降级旧【关键词】格式解析（行为不变）。
    */
   private async rewriteQuery(rawQ: string): Promise<RewriteOutput | null> {
@@ -1475,7 +1475,7 @@ export default class EdgeTutorPlugin extends Plugin {
           `1. ${chapterHint}先根据章节地图判断最相关的 1-2 个讲次 → 用 read/grep 在该文件中定位原文。`,
           "2. 若目标讲次中没有，再检查相邻讲次；仍找不到就只输出：未找到",
           "3. 输出格式（严格遵守，只输出 1-3 处，每处一个块）：",
-          "【文件】vault 相对路径（相对 vault 根，不是绝对路径，不含行号），形如 learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md",
+          "【文件】vault 相对路径（相对 vault 根，不是绝对路径，不含行号），形如 References/chapter-06.md",
           "【行号】起行-止行",
           "【原文】该区间原文，150-300 字，保留原表述",
         ].join("\n");
@@ -1903,20 +1903,20 @@ class EdgeTutorSettingTab extends PluginSettingTab {
     } else {
       new Setting(containerEl)
         .setName("Agent API 地址")
-        .setDesc("OpenAI 兼容端点（需支持 tool_calls）。默认 opencode-go 网关。")
+        .setDesc("OpenAI 兼容端点（需支持 tool_calls）。默认 OpenAI API；也可填入兼容服务。")
         .addText((text) =>
-          text.setValue(this.plugin.settings.agentApiBase || "https://opencode.ai/zen/go/v1").onChange(async (v) => {
-            this.plugin.settings.agentApiBase = v.trim() || "https://opencode.ai/zen/go/v1";
+          text.setValue(this.plugin.settings.agentApiBase || "https://api.openai.com/v1").onChange(async (v) => {
+            this.plugin.settings.agentApiBase = v.trim() || "https://api.openai.com/v1";
             await this.plugin.saveSettings();
           })
         );
 
       new Setting(containerEl)
         .setName("Agent API Key 环境变量名")
-        .setDesc("从环境变量读取密钥（优先于下面明文）。opencode-go 网关 key。")
+        .setDesc("从环境变量读取密钥（优先于下面明文）。")
         .addText((text) =>
-          text.setValue(this.plugin.settings.agentApiKeyEnv || "OPENCODE_GO_API_KEY").onChange(async (v) => {
-            this.plugin.settings.agentApiKeyEnv = v.trim() || "OPENCODE_GO_API_KEY";
+          text.setValue(this.plugin.settings.agentApiKeyEnv || "EDGE_TUTOR_AGENT_API_KEY").onChange(async (v) => {
+            this.plugin.settings.agentApiKeyEnv = v.trim() || "EDGE_TUTOR_AGENT_API_KEY";
             await this.plugin.saveSettings();
           })
         );
@@ -1936,10 +1936,10 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Agent 模型")
-        .setDesc("支持 function calling 的模型（默认 opencode-go 网关的 deepseek-v4-flash）。")
+        .setDesc("支持 function calling 的模型。")
         .addText((text) =>
-          text.setValue(this.plugin.settings.agentModel || "deepseek-v4-flash").onChange(async (v) => {
-            this.plugin.settings.agentModel = v.trim() || "deepseek-v4-flash";
+          text.setValue(this.plugin.settings.agentModel || "gpt-4.1-mini").onChange(async (v) => {
+            this.plugin.settings.agentModel = v.trim() || "gpt-4.1-mini";
             await this.plugin.saveSettings();
           })
         );
@@ -2012,7 +2012,7 @@ class EdgeTutorSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("API Key")
-      .setDesc("当前 Provider 的密钥（仅存本地 data.json）。预设不再内置明文 key：切换 Provider 后这里为空，密钥自动从环境变量 EDGE_TUTOR_KEY_<ID> 读取；chat2api 反代 JWT 仍可在此填写。")
+      .setDesc("当前 Provider 的密钥（仅存本地 data.json）。预设不内置明文 key；也可从环境变量 EDGE_TUTOR_KEY_<ID> 读取。")
       .addText((text) => {
         text.inputEl.type = "password";
         text.setPlaceholder("sk-...")

@@ -18,7 +18,7 @@ const sampleNodes = [
 ];
 
 test("JSON 备份 roundtrip：全字段完整", () => {
-  const json = toJSONBackup(sampleNodes, { workspace: "main", source: "张宇" });
+  const json = toJSONBackup(sampleNodes, { workspace: "main", source: "Example notes" });
   const parsed = parseJSONBackup(json);
   assert.equal(parsed.ok, true);
   assert.equal(parsed.nodes.length, 1);

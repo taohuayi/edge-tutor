@@ -63,14 +63,14 @@ test("normalizeMath：半截括号兜底（不破坏普通文本）", () => {
 });
 
 test("buildWsTreeData：main → 默认工作区；嵌套路径建树", () => {
-  const tree = buildWsTreeData(["main", "张宇基础30讲/1", "张宇基础30讲/2", "学习观/入门"]);
+  const tree = buildWsTreeData(["main", "Calculus/1", "Calculus/2", "Foundations/intro"]);
   const names = tree.map((n) => n.name).sort();
-  assert.deepEqual(names, ["张宇基础30讲", "学习观", "默认工作区"].sort());
-  const zhangyu = tree.find((n) => n.name === "张宇基础30讲");
-  assert.ok(zhangyu, "应存在张宇基础30讲文件夹");
-  assert.equal(zhangyu.children.length, 2);
-  assert.equal(zhangyu.children[0].id, "张宇基础30讲/1");
-  assert.equal(zhangyu.children[0].name, "1");
+  assert.deepEqual(names, ["Calculus", "Foundations", "默认工作区"].sort());
+  const calculus = tree.find((n) => n.name === "Calculus");
+  assert.ok(calculus, "应存在 Calculus 文件夹");
+  assert.equal(calculus.children.length, 2);
+  assert.equal(calculus.children[0].id, "Calculus/1");
+  assert.equal(calculus.children[0].name, "1");
 });
 
 test("buildWsTreeData：文件夹节点排前，文件夹内按中文排序", () => {

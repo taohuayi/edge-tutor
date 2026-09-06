@@ -44836,40 +44836,23 @@ var PRESET_PROVIDERS = [
     apiBase: "https://api.deepseek.com/v1",
     apiKey: "",
     keyEnv: "EDGE_TUTOR_KEY_DEEPSEEK",
-    models: ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-pro"]
+    models: ["deepseek-chat", "deepseek-reasoner"]
   },
   {
-    id: "tokeness-claude",
-    name: "Tokeness\uFF08Claude\uFF09",
-    apiBase: "https://n.tokeness.io/v1",
+    id: "openai",
+    name: "OpenAI",
+    apiBase: "https://api.openai.com/v1",
     apiKey: "",
-    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_CLAUDE",
-    // 实测（2026-08-10）：此 key 挂在 Claude 组，仅这 4 个模型可用，其余返回 model_not_found
-    models: ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"]
+    keyEnv: "EDGE_TUTOR_KEY_OPENAI",
+    models: ["gpt-4.1-mini"]
   },
   {
-    id: "tokeness-gpt",
-    name: "Tokeness\uFF08GPT\uFF09",
-    apiBase: "https://n.tokeness.io/v1",
+    id: "custom",
+    name: "Custom OpenAI-compatible API",
+    apiBase: "",
     apiKey: "",
-    keyEnv: "EDGE_TUTOR_KEY_TOKENESS_GPT",
-    // GPT 组 key（来源：Hermes config.yaml 的 providers.tokeness-gpt，2026-08-10 实测 6 模型全通）
-    models: ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
-  },
-  {
-    id: "zhuomatech",
-    name: "Zhuomatech",
-    apiBase: "https://api.zhuomatech.cn/v1",
-    apiKey: "",
-    keyEnv: "EDGE_TUTOR_KEY_ZHUOMATECH",
-    models: ["codex-auto-review", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra"]
-  },
-  {
-    id: "chat2api",
-    name: "chat2api \u53CD\u4EE3\uFF08\u672C\u673A 5005\uFF09",
-    apiBase: "http://127.0.0.1:5005/v1",
-    apiKey: "",
-    models: ["gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5", "gpt-4.5o", "gpt-4o", "gpt-4o-mini", "o3-mini"]
+    keyEnv: "EDGE_TUTOR_KEY_CUSTOM",
+    models: ["your-model"]
   }
 ];
 var DEFAULT_SETTINGS = {
@@ -44877,17 +44860,17 @@ var DEFAULT_SETTINGS = {
   apiKeyEnv: "EDGE_TUTOR_API_KEY",
   apiKey: "",
   model: "deepseek-chat",
-  nodeFolder: "learning/peizhi/learn/_wiki/\u8BA4\u77E5\u8FB9\u7F18",
-  textbookRoot: "learning/peizhi/learn/_materials/math/\u5F20\u5B87\u57FA\u784030\u8BB2/markdown_v2/\u6700\u7EC8\u7248",
+  nodeFolder: "Edge Tutor",
+  textbookRoot: "",
   draft: null,
   maxTokens: 4096,
   temperature: 0.7,
-  activeProvider: "chat2api",
-  agentApiBase: "https://opencode.ai/zen/go/v1",
-  agentApiKeyEnv: "OPENCODE_GO_API_KEY",
+  activeProvider: "deepseek",
+  agentApiBase: "https://api.openai.com/v1",
+  agentApiKeyEnv: "EDGE_TUTOR_AGENT_API_KEY",
   agentApiKey: "",
-  agentModel: "deepseek-v4-flash",
-  agentChannel: "opencode",
+  agentModel: "gpt-4.1-mini",
+  agentChannel: "openai",
   opencodeBase: "http://127.0.0.1:10999",
   opencodeProvider: "opencode-go",
   opencodeModel: "deepseek-v4-flash",
@@ -45096,7 +45079,7 @@ var import_obsidian = require("obsidian");
 var AGENT_TOOLS = [
   {
     name: "read_note",
-    description: "\u8BFB\u53D6 vault \u5185\u7B14\u8BB0\u7684\u5B8C\u6574\u5185\u5BB9\u3002\u53C2\u6570 path \u4E3A vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 learning/peizhi/learn/_wiki/\u8BA4\u77E5\u8FB9\u7F18/xxx.md\uFF09\u3002\u7528\u4E8E\u4E86\u89E3\u5DF2\u6709\u7B14\u8BB0\u5185\u5BB9\u3002",
+    description: "\u8BFB\u53D6 vault \u5185\u7B14\u8BB0\u7684\u5B8C\u6574\u5185\u5BB9\u3002\u53C2\u6570 path \u4E3A vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982 References/example.md\uFF09\u3002\u7528\u4E8E\u4E86\u89E3\u5DF2\u6709\u7B14\u8BB0\u5185\u5BB9\u3002",
     parameters: {
       type: "object",
       properties: { path: { type: "string", description: "vault \u76F8\u5BF9\u8DEF\u5F84" } },
@@ -49019,7 +49002,7 @@ ${branchInstr}` : "";
           hit.text,
           "",
           "\u56DE\u7B54\u89C4\u5219\uFF1A",
-          "1. \u5F15\u7528\u6559\u6750\u5185\u5BB9\u65F6\u6807\u6CE8\u3010\u{1F4D6} \u5B8C\u6574\u8DEF\u5F84:\u884C\u3011\uFF0C\u8DEF\u5F84\u5FC5\u987B\u662F vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982\u3010\u{1F4D6} learning/peizhi/learn/_materials/math/\u5F20\u5B87\u57FA\u784030\u8BB2/chapters/\u7B2C6\u8BB2.md:364\u3011\uFF09\uFF0C\u7981\u6B62\u7B80\u5199\u6210\u6587\u4EF6\u540D\u3002",
+          "1. \u5F15\u7528\u6559\u6750\u5185\u5BB9\u65F6\u6807\u6CE8\u3010\u{1F4D6} \u5B8C\u6574\u8DEF\u5F84:\u884C\u3011\uFF0C\u8DEF\u5F84\u5FC5\u987B\u662F vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u5982\u3010\u{1F4D6} References/chapter-06.md:364\u3011\uFF09\uFF0C\u7981\u6B62\u7B80\u5199\u6210\u6587\u4EF6\u540D\u3002",
           "2. \u5F15\u7528\u672A\u8986\u76D6\u7684\u90E8\u5206\u57FA\u4E8E\u5DF2\u6709\u77E5\u8BC6\u56DE\u7B54\u5373\u53EF\uFF0C\u4E0D\u9700\u8981\u58F0\u660E\u300C\u6559\u6750\u672A\u76F4\u63A5\u5BF9\u5E94\u300D\u3002",
           "3. \u4E0D\u7F16\u9020\u539F\u6587\u2014\u2014\u5F15\u7528\u7684\u6587\u5B57\u5FC5\u987B\u6765\u81EA\u4E0A\u9762\u7684\u6559\u6750\u5F15\u7528\u3002",
           "4. \u5F53\u5B66\u751F\u8981\u6C42\u300C\u591A\u70B9\u5B9E\u4F8B/\u7C7B\u4F3C\u9898\u76EE/\u7C7B\u4F3C\u7684\u51FA\u9898\u601D\u60F3\u300D\u65F6\uFF0C\u4ECE\u4E0A\u9762\u7684\u5F15\u7528\u4E2D\u81F3\u5C11\u6311\u51FA 3 \u4E2A\u4EE5\u4E0A\u4E0D\u540C\u8BB2\u6B21\u7684\u5B9E\u4F8B\uFF0C\u6BCF\u4E2A\u5B9E\u4F8B\u90FD\u9644\u5F15\u7528\u3002"
@@ -50347,10 +50330,10 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian9.Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
   }
-  /** 刷新教材注册表（books.yaml 是 ingest_book.py 维护的权威注册表；读取失败静默降级） */
+  /** Refresh the optional, vault-local textbook registry. Missing registry falls back to manual paths. */
   async refreshTextbookRegistry() {
     try {
-      const raw = await this.app.vault.adapter.read("learning/peizhi/learn/_materials/books.yaml");
+      const raw = await this.app.vault.adapter.read(".edge-tutor/books.yaml");
       this.textbookRegistry = parseBooksYaml(raw);
     } catch (e) {
       console.warn("[edge-tutor] books.yaml \u8BFB\u53D6\u5931\u8D25\uFF0C\u6559\u6750\u4E0B\u62C9\u964D\u7EA7\u4E3A\u624B\u52A8\u8F93\u5165", e.message.slice(0, 100));
@@ -50688,7 +50671,7 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian9.Plugin {
   }
   /**
    * 重命名工作区（移动文件夹）。
-   * 子工作区（含 /）保留教材容器前缀：张宇基础30讲/双曲函数体系 → 张宇基础30讲/新名，
+   * Nested workspaces preserve their collection prefix, for example Calculus/limits → Calculus/derivatives.
    * 不再挪到根级。返回最终工作区 id（失败/同名返回 null，调用方保持现状）。
    */
   async renameWorkspace(oldName, newName) {
@@ -50859,14 +50842,14 @@ var _EdgeTutorPlugin = class _EdgeTutorPlugin extends import_obsidian9.Plugin {
       new import_obsidian9.Notice("\u5F53\u524D\u5DE5\u4F5C\u533A\u6CA1\u6709\u4F1A\u8BDD\u53EF\u5BFC\u51FA");
       return;
     }
-    const exportFolder = "learning/peizhi/learn/_wiki/\u8BA4\u77E5\u8FB9\u7F18/_exports";
+    const exportFolder = `${this.settings.nodeFolder}/_exports`;
     await this.ensureFolder(exportFolder);
     const stamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const safeWs = ws3.replace(/[/\\]/g, "_");
     if (format2 === "markdown") {
       const md2 = formatConvMarkdown(conv, {
         title: `\u8BA4\u77E5\u8FB9\u7F18\u4F1A\u8BDD\u5BFC\u51FA\uFF08${ws3 === "main" ? "\u9ED8\u8BA4" : ws3}\uFF09`,
-        source: "\u5F20\u5B87\u57FA\u784030\u8BB2",
+        source: "Edge Tutor",
         workspace: ws3
       });
       const path3 = `${exportFolder}/\u8BA4\u77E5\u8FB9\u7F18\u5BFC\u51FA_${safeWs}_${stamp}.md`;
@@ -51219,7 +51202,7 @@ ${summary.summaryText}`);
   /**
    * LLM 查询理解 + 章节路由：一步非流式调用（≤2s 超时，失败返回 null）把口语问题
    * 转为结构化理解（concept/intent/knowledge_need/related_terms/chapters/3 个查询变体）——
-   * 解决"表述完全不同/跨章节综合"类查询。复用对话通道（chat2api），不额外消耗 agent 通道。
+   * Handles differently worded and cross-chapter questions through the configured chat channel.
    * JSON 输出优先；解析失败降级旧【关键词】格式解析（行为不变）。
    */
   async rewriteQuery(rawQ) {
@@ -51405,7 +51388,7 @@ ${summary.summaryText}`);
           `1. ${chapterHint}\u5148\u6839\u636E\u7AE0\u8282\u5730\u56FE\u5224\u65AD\u6700\u76F8\u5173\u7684 1-2 \u4E2A\u8BB2\u6B21 \u2192 \u7528 read/grep \u5728\u8BE5\u6587\u4EF6\u4E2D\u5B9A\u4F4D\u539F\u6587\u3002`,
           "2. \u82E5\u76EE\u6807\u8BB2\u6B21\u4E2D\u6CA1\u6709\uFF0C\u518D\u68C0\u67E5\u76F8\u90BB\u8BB2\u6B21\uFF1B\u4ECD\u627E\u4E0D\u5230\u5C31\u53EA\u8F93\u51FA\uFF1A\u672A\u627E\u5230",
           "3. \u8F93\u51FA\u683C\u5F0F\uFF08\u4E25\u683C\u9075\u5B88\uFF0C\u53EA\u8F93\u51FA 1-3 \u5904\uFF0C\u6BCF\u5904\u4E00\u4E2A\u5757\uFF09\uFF1A",
-          "\u3010\u6587\u4EF6\u3011vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u76F8\u5BF9 vault \u6839\uFF0C\u4E0D\u662F\u7EDD\u5BF9\u8DEF\u5F84\uFF0C\u4E0D\u542B\u884C\u53F7\uFF09\uFF0C\u5F62\u5982 learning/peizhi/learn/_materials/math/\u5F20\u5B87\u57FA\u784030\u8BB2/chapters/\u7B2C6\u8BB2.md",
+          "\u3010\u6587\u4EF6\u3011vault \u76F8\u5BF9\u8DEF\u5F84\uFF08\u76F8\u5BF9 vault \u6839\uFF0C\u4E0D\u662F\u7EDD\u5BF9\u8DEF\u5F84\uFF0C\u4E0D\u542B\u884C\u53F7\uFF09\uFF0C\u5F62\u5982 References/chapter-06.md",
           "\u3010\u884C\u53F7\u3011\u8D77\u884C-\u6B62\u884C",
           "\u3010\u539F\u6587\u3011\u8BE5\u533A\u95F4\u539F\u6587\uFF0C150-300 \u5B57\uFF0C\u4FDD\u7559\u539F\u8868\u8FF0"
         ].join("\n");
@@ -51774,15 +51757,15 @@ var EdgeTutorSettingTab = class extends import_obsidian9.PluginSettingTab {
         })
       );
     } else {
-      new import_obsidian9.Setting(containerEl).setName("Agent API \u5730\u5740").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u9700\u652F\u6301 tool_calls\uFF09\u3002\u9ED8\u8BA4 opencode-go \u7F51\u5173\u3002").addText(
-        (text) => text.setValue(this.plugin.settings.agentApiBase || "https://opencode.ai/zen/go/v1").onChange(async (v) => {
-          this.plugin.settings.agentApiBase = v.trim() || "https://opencode.ai/zen/go/v1";
+      new import_obsidian9.Setting(containerEl).setName("Agent API \u5730\u5740").setDesc("OpenAI \u517C\u5BB9\u7AEF\u70B9\uFF08\u9700\u652F\u6301 tool_calls\uFF09\u3002\u9ED8\u8BA4 OpenAI API\uFF1B\u4E5F\u53EF\u586B\u5165\u517C\u5BB9\u670D\u52A1\u3002").addText(
+        (text) => text.setValue(this.plugin.settings.agentApiBase || "https://api.openai.com/v1").onChange(async (v) => {
+          this.plugin.settings.agentApiBase = v.trim() || "https://api.openai.com/v1";
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian9.Setting(containerEl).setName("Agent API Key \u73AF\u5883\u53D8\u91CF\u540D").setDesc("\u4ECE\u73AF\u5883\u53D8\u91CF\u8BFB\u53D6\u5BC6\u94A5\uFF08\u4F18\u5148\u4E8E\u4E0B\u9762\u660E\u6587\uFF09\u3002opencode-go \u7F51\u5173 key\u3002").addText(
-        (text) => text.setValue(this.plugin.settings.agentApiKeyEnv || "OPENCODE_GO_API_KEY").onChange(async (v) => {
-          this.plugin.settings.agentApiKeyEnv = v.trim() || "OPENCODE_GO_API_KEY";
+      new import_obsidian9.Setting(containerEl).setName("Agent API Key \u73AF\u5883\u53D8\u91CF\u540D").setDesc("\u4ECE\u73AF\u5883\u53D8\u91CF\u8BFB\u53D6\u5BC6\u94A5\uFF08\u4F18\u5148\u4E8E\u4E0B\u9762\u660E\u6587\uFF09\u3002").addText(
+        (text) => text.setValue(this.plugin.settings.agentApiKeyEnv || "EDGE_TUTOR_AGENT_API_KEY").onChange(async (v) => {
+          this.plugin.settings.agentApiKeyEnv = v.trim() || "EDGE_TUTOR_AGENT_API_KEY";
           await this.plugin.saveSettings();
         })
       );
@@ -51793,9 +51776,9 @@ var EdgeTutorSettingTab = class extends import_obsidian9.PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
-      new import_obsidian9.Setting(containerEl).setName("Agent \u6A21\u578B").setDesc("\u652F\u6301 function calling \u7684\u6A21\u578B\uFF08\u9ED8\u8BA4 opencode-go \u7F51\u5173\u7684 deepseek-v4-flash\uFF09\u3002").addText(
-        (text) => text.setValue(this.plugin.settings.agentModel || "deepseek-v4-flash").onChange(async (v) => {
-          this.plugin.settings.agentModel = v.trim() || "deepseek-v4-flash";
+      new import_obsidian9.Setting(containerEl).setName("Agent \u6A21\u578B").setDesc("\u652F\u6301 function calling \u7684\u6A21\u578B\u3002").addText(
+        (text) => text.setValue(this.plugin.settings.agentModel || "gpt-4.1-mini").onChange(async (v) => {
+          this.plugin.settings.agentModel = v.trim() || "gpt-4.1-mini";
           await this.plugin.saveSettings();
         })
       );
@@ -51845,7 +51828,7 @@ var EdgeTutorSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("API Key").setDesc("\u5F53\u524D Provider \u7684\u5BC6\u94A5\uFF08\u4EC5\u5B58\u672C\u5730 data.json\uFF09\u3002\u9884\u8BBE\u4E0D\u518D\u5185\u7F6E\u660E\u6587 key\uFF1A\u5207\u6362 Provider \u540E\u8FD9\u91CC\u4E3A\u7A7A\uFF0C\u5BC6\u94A5\u81EA\u52A8\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\uFF1Bchat2api \u53CD\u4EE3 JWT \u4ECD\u53EF\u5728\u6B64\u586B\u5199\u3002").addText((text) => {
+    new import_obsidian9.Setting(containerEl).setName("API Key").setDesc("\u5F53\u524D Provider \u7684\u5BC6\u94A5\uFF08\u4EC5\u5B58\u672C\u5730 data.json\uFF09\u3002\u9884\u8BBE\u4E0D\u5185\u7F6E\u660E\u6587 key\uFF1B\u4E5F\u53EF\u4ECE\u73AF\u5883\u53D8\u91CF EDGE_TUTOR_KEY_<ID> \u8BFB\u53D6\u3002").addText((text) => {
       text.inputEl.type = "password";
       text.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey).onChange(async (v) => {
         this.plugin.settings.apiKey = v.trim();

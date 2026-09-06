@@ -1,7 +1,7 @@
 {
   "name": "edge-tutor",
   "version": "0.11.0",
-  "description": "认知边缘导师：选中教材文本追问 AI（价值识别器，绝不拉回）+ 执行模式 agent（委托 opencode 全能力执行）。沉淀认知节点笔记 + 原理链认知地图",
+  "description": "An Obsidian plugin for branching AI learning conversations, source anchors, and durable knowledge maps.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs && node scripts/copy-wasm.mjs",

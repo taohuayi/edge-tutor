@@ -20,13 +20,11 @@ test("readEnv：注入 env 表读取；缺失返回空串", () => {
   assert.equal(readEnv("NOPE", { EDGE_TUTOR_KEY_DEEPSEEK: "sk-test" }), "");
 });
 
-test("PRESET_PROVIDERS：apiKey 全空且非 chat2api 有专属 keyEnv（明文 key 不得再进源码）", () => {
+test("PRESET_PROVIDERS：apiKey 全空且每个预设有专属 keyEnv（明文 key 不得再进源码）", () => {
   for (const p of PRESET_PROVIDERS) {
     assert.ok(!/sk-[A-Za-z0-9]{8}/.test(p.apiKey || ""), p.id + " 的 apiKey 含明文 key");
-    if (p.id !== "chat2api") {
-      assert.ok(p.keyEnv, p.id + " 缺少 keyEnv");
-      assert.match(p.keyEnv, /^EDGE_TUTOR_KEY_/, p.id + " 的 keyEnv 命名");
-    }
+    assert.ok(p.keyEnv, p.id + " 缺少 keyEnv");
+    assert.match(p.keyEnv, /^EDGE_TUTOR_KEY_/, p.id + " 的 keyEnv 命名");
   }
 });
 
@@ -55,6 +53,6 @@ test("resolveProviderKey：Provider 专属 env > 全局 env", () => {
 });
 
 test("resolveProviderKey：全缺 → 空串（不抛错）", () => {
-  const s = { ...DEFAULT_SETTINGS, apiKey: "", activeProvider: "zhuomatech" };
+  const s = { ...DEFAULT_SETTINGS, apiKey: "", activeProvider: "custom" };
   assert.equal(resolveProviderKey(s, resolveProvider(s), {}), "");
 });

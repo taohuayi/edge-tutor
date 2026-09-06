@@ -1,10 +1,10 @@
 /**
  * Agent 执行模式：插件内嵌 agent（OpenAI 兼容通道，支持 function calling）
  *
- * 架构（用户确认 2026-08-07）：
- *   - 对话模式 → chat2api 反代（免费号，纯文本）——见 ai.ts
- *   - 执行模式 → 本模块：DeepSeek 官方 API + tool_calls → vault 工具执行
- *   - 用户手动切换模式（不做自动路由）
+ * Architecture:
+ *   - Conversation mode uses the configured OpenAI-compatible chat endpoint.
+ *   - Agent mode uses a tool-calling endpoint to operate on the current vault.
+ *   - The user explicitly selects the mode; no automatic routing occurs.
  *
  * 工具边界：全部在 vault 内（安全），无 shell/网络。
  */
@@ -61,7 +61,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "read_note",
     description:
-      "读取 vault 内笔记的完整内容。参数 path 为 vault 相对路径（如 learning/peizhi/learn/_wiki/认知边缘/xxx.md）。用于了解已有笔记内容。",
+      "读取 vault 内笔记的完整内容。参数 path 为 vault 相对路径（如 References/example.md）。用于了解已有笔记内容。",
     parameters: {
       type: "object",
       properties: { path: { type: "string", description: "vault 相对路径" } },

@@ -19,11 +19,11 @@ import {
 
 test("新格式：【文件】+【行号】+【原文】结构化解析", () => {
   const answer = [
-    "【文件】learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md",
+    "【文件】References/chapter-06.md",
     "【行号】364-391",
     "【原文】定理 7(拉格朗日中值定理)。设 $f(x)$ 满足 ①在 $[a,b]$ 上连续…",
     "",
-    "【文件】learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md",
+    "【文件】References/chapter-06.md",
     "【行号】420-425",
     "【原文】注 见到 $f(a)-f(b)$ 或 $f$ 与 $f'$ 的关系…",
   ].join("\n");
@@ -31,10 +31,10 @@ test("新格式：【文件】+【行号】+【原文】结构化解析", () => 
   assert.equal(r.found, true);
   assert.equal(r.count, 2);
   assert.equal(r.refs.length, 2);
-  assert.equal(r.refs[0].file, "learning/peizhi/learn/_materials/math/张宇基础30讲/chapters/第6讲.md");
+  assert.equal(r.refs[0].file, "References/chapter-06.md");
   assert.equal(r.refs[0].startLine, 364);
   assert.equal(r.refs[0].endLine, 391);
-  assert.ok(r.text.includes("【教材引用 #1｜第6讲】"));
+  assert.ok(r.text.includes("【教材引用 #1】"));
   assert.ok(r.text.includes("行：364-391"));
 });
 

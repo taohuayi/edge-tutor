@@ -30,9 +30,7 @@ export interface ReadOnlySource {
 }
 
 /** 默认只读补充源（_wiki 下符合归位合同的跨学科概念活页） */
-export const DEFAULT_READONLY_SOURCES: ReadOnlySource[] = [
-  { name: "概念活页", path: "learning/peizhi/learn/_wiki/concepts" },
-];
+export const DEFAULT_READONLY_SOURCES: ReadOnlySource[] = [];
 
 /** 递归展开文件夹下的 .md 文件 */
 async function collectMdFiles(app: App, folder: TFolder, acc: TFile[]): Promise<void> {
