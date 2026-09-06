@@ -46106,7 +46106,7 @@ function installCorsBypassFetch() {
     const url2 = typeof input === "string" ? input : input instanceof URL ? input.toString() : input?.url;
     if (typeof url2 !== "string") return nativeFetch(input, init);
     if (url2.startsWith("file://")) {
-      const p = decodeURIComponent(url2.replace(/^file:\/\//, "").replace(/^\//, ""));
+      const p = require("url").fileURLToPath(url2);
       return readLocal(p, "application/wasm");
     }
     if (/^[A-Za-z]:[\\/]/.test(url2)) return readLocal(url2, "application/octet-stream");

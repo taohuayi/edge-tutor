@@ -77,8 +77,8 @@ export function installCorsBypassFetch(): void {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input?.url;
     if (typeof url !== "string") return nativeFetch(input, init);
     if (url.startsWith("file://")) {
-      // file:///E:/path → E:/path（Windows 盘符前的 / 去掉）
-      const p = decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\//, ""));
+      // Handles both file:///E:/path on Windows and file:///tmp/path on POSIX.
+      const p = require("url").fileURLToPath(url);
       return readLocal(p, "application/wasm");
     }
     // Windows 本地绝对路径（transformers.js 的 IS_NODE_ENV 分支返回模型文件路径字符串；
